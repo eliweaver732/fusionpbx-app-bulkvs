@@ -1,0 +1,79 @@
+<?php
+
+$text['title-bulkvs']['en-us'] = "BulkVS";
+$text['title-bulkvs']['en-gb'] = "BulkVS";
+
+$text['title-bulkvs-numbers']['en-us'] = "BulkVS Numbers";
+$text['title-bulkvs-numbers']['en-gb'] = "BulkVS Numbers";
+
+$text['title-bulkvs-number-edit']['en-us'] = "Edit Number";
+$text['title-bulkvs-number-edit']['en-gb'] = "Edit Number";
+
+$text['title-bulkvs-search']['en-us'] = "Search & Purchase Numbers";
+$text['title-bulkvs-search']['en-gb'] = "Search & Purchase Numbers";
+
+$text['label-telephone-number']['en-us'] = "Telephone Number";
+$text['label-telephone-number']['en-gb'] = "Telephone Number";
+
+$text['label-trunk-group']['en-us'] = "Trunk Group";
+$text['label-trunk-group']['en-gb'] = "Trunk Group";
+
+$text['label-portout-pin']['en-us'] = "Portout PIN";
+$text['label-portout-pin']['en-gb'] = "Portout PIN";
+
+$text['label-cnam']['en-us'] = "CNAM";
+$text['label-cnam']['en-gb'] = "CNAM";
+
+$text['label-npa']['en-us'] = "Area Code (NPA)";
+$text['label-npa']['en-gb'] = "Area Code (NPA)";
+
+$text['label-npanxx']['en-us'] = "Area Code + Exchange (NPANXX)";
+$text['label-npanxx']['en-gb'] = "Area Code + Exchange (NPANXX)";
+
+$text['label-rate-center']['en-us'] = "Rate Center";
+$text['label-rate-center']['en-gb'] = "Rate Center";
+
+$text['label-lata']['en-us'] = "LATA";
+$text['label-lata']['en-gb'] = "LATA";
+
+$text['label-domain']['en-us'] = "Domain";
+$text['label-domain']['en-gb'] = "Domain";
+
+$text['button-search']['en-us'] = "Search";
+$text['button-search']['en-gb'] = "Search";
+
+$text['button-purchase']['en-us'] = "Purchase";
+$text['button-purchase']['en-gb'] = "Purchase";
+
+$text['button-save']['en-us'] = "Save";
+$text['button-save']['en-gb'] = "Save";
+
+$text['button-back']['en-us'] = "Back";
+$text['button-back']['en-gb'] = "Back";
+
+$text['button-edit']['en-us'] = "Edit";
+$text['button-edit']['en-gb'] = "Edit";
+
+$text['message-update']['en-us'] = "Update Completed";
+$text['message-update']['en-gb'] = "Update Completed";
+
+$text['message-purchase-success']['en-us'] = "Number purchased successfully and destination created";
+$text['message-purchase-success']['en-gb'] = "Number purchased successfully and destination created";
+
+$text['message-api-error']['en-us'] = "API Error";
+$text['message-api-error']['en-gb'] = "API Error";
+
+$text['message-no-numbers']['en-us'] = "No numbers found";
+$text['message-no-numbers']['en-gb'] = "No numbers found";
+
+$text['message-no-results']['en-us'] = "No search results found";
+$text['message-no-results']['en-gb'] = "No search results found";
+
+$text['description-bulkvs-numbers']['en-us'] = "View and manage BulkVS phone numbers filtered by trunk group.";
+$text['description-bulkvs-numbers']['en-gb'] = "View and manage BulkVS phone numbers filtered by trunk group.";
+
+$text['description-bulkvs-search']['en-us'] = "Search for available phone numbers and purchase them. Purchased numbers will be automatically created as destinations.";
+$text['description-bulkvs-search']['en-gb'] = "Search for available phone numbers and purchase them. Purchased numbers will be automatically created as destinations.";
+
+?>
+
