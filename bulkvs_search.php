@@ -42,11 +42,23 @@
 	$settings = new settings(['database' => $database, 'domain_uuid' => $domain_uuid]);
 
 //get http variables
-	$npa = $_GET['npa'] ?? $_POST['npa'] ?? '';
-	$npanxx = $_GET['npanxx'] ?? $_POST['npanxx'] ?? '';
+	$search_query = $_GET['search'] ?? $_POST['search'] ?? '';
 	$search_action = $_GET['action'] ?? $_POST['action'] ?? '';
 	$purchase_tn = $_POST['purchase_tn'] ?? '';
 	$purchase_domain_uuid = $_POST['purchase_domain_uuid'] ?? '';
+	
+	// Parse search query: 3 digits = NPA, 6 digits = NPANXX
+	$npa = '';
+	$nxx = '';
+	if (!empty($search_query)) {
+		$search_query = preg_replace('/[^0-9]/', '', $search_query); // Remove non-numeric
+		if (strlen($search_query) == 3) {
+			$npa = $search_query;
+		} elseif (strlen($search_query) == 6) {
+			$npa = substr($search_query, 0, 3);
+			$nxx = substr($search_query, 3, 3);
+		}
+	}
 
 //process purchase
 	if ($search_action == 'purchase' && !empty($purchase_tn) && !empty($purchase_domain_uuid)) {
@@ -107,7 +119,7 @@
 			$p->delete('dialplan_detail_add', 'temp');
 
 			message::add($text['message-purchase-success']);
-			header("Location: bulkvs_search.php?npa=".urlencode($npa)."&npanxx=".urlencode($npanxx));
+			header("Location: bulkvs_search.php?search=".urlencode($search_query)."&action=search");
 			return;
 		} catch (Exception $e) {
 			message::add($text['message-api-error'] . ': ' . $e->getMessage(), 'negative');
@@ -117,16 +129,14 @@
 //search for numbers
 	$search_results = [];
 	$error_message = '';
-	if ($search_action == 'search' && (!empty($npa) || !empty($npanxx))) {
+	if ($search_action == 'search' && !empty($npa)) {
 		try {
 			require_once "resources/classes/bulkvs_api.php";
 			$bulkvs_api = new bulkvs_api($settings);
-			$api_response = $bulkvs_api->searchNumbers($npa, $npanxx);
+			$api_response = $bulkvs_api->searchNumbers($npa, $nxx);
 			
-			// Handle API response
-			if (isset($api_response['data']) && is_array($api_response['data'])) {
-				$search_results = $api_response['data'];
-			} elseif (is_array($api_response)) {
+			// Handle API response - API returns array directly, not wrapped in 'data'
+			if (is_array($api_response)) {
 				$search_results = $api_response;
 			}
 		} catch (Exception $e) {
@@ -180,12 +190,8 @@
 	echo "			<input type='hidden' name='action' value='search'>\n";
 	echo "			<table class='no_hover'>\n";
 	echo "				<tr>\n";
-	echo "					<td class='vncell'>".$text['label-npa']."</td>\n";
-	echo "					<td class='vtable'><input type='text' class='formfld' name='npa' value='".escape($npa)."' maxlength='3' placeholder='e.g., 415'></td>\n";
-	echo "				</tr>\n";
-	echo "				<tr>\n";
-	echo "					<td class='vncell'>".$text['label-npanxx']."</td>\n";
-	echo "					<td class='vtable'><input type='text' class='formfld' name='npanxx' value='".escape($npanxx)."' maxlength='6' placeholder='e.g., 415555'></td>\n";
+	echo "					<td class='vncell'>Search</td>\n";
+	echo "					<td class='vtable'><input type='text' class='formfld' name='search' value='".escape($search_query)."' maxlength='6' placeholder='3 digits (area code) or 6 digits (area code + exchange)'></td>\n";
 	echo "				</tr>\n";
 	echo "				<tr>\n";
 	echo "					<td colspan='2'><input type='submit' class='btn' value='".$text['button-search']."'></td>\n";
@@ -216,9 +222,10 @@
 			echo "</tr>\n";
 
 			foreach ($search_results as $result) {
-				$tn = $result['tn'] ?? $result['telephoneNumber'] ?? '';
-				$rate_center = $result['rateCenter'] ?? '';
-				$lata = $result['lata'] ?? '';
+				// API returns fields with spaces: "TN", "Rate Center", "LATA", etc.
+				$tn = $result['TN'] ?? $result['tn'] ?? $result['telephoneNumber'] ?? '';
+				$rate_center = $result['Rate Center'] ?? $result['rateCenter'] ?? '';
+				$lata = $result['LATA'] ?? $result['lata'] ?? '';
 
 				echo "<tr class='list-row'>\n";
 				echo "	<td>".escape($tn)."</td>\n";
@@ -229,8 +236,7 @@
 					echo "		<form method='post' action='' style='display: inline;'>\n";
 					echo "			<input type='hidden' name='action' value='purchase'>\n";
 					echo "			<input type='hidden' name='purchase_tn' value='".escape($tn)."'>\n";
-					echo "			<input type='hidden' name='npa' value='".escape($npa)."'>\n";
-					echo "			<input type='hidden' name='npanxx' value='".escape($npanxx)."'>\n";
+					echo "			<input type='hidden' name='search' value='".escape($search_query)."'>\n";
 					echo "			<select name='purchase_domain_uuid' class='formfld' style='width: auto; margin-right: 5px;'>\n";
 					foreach ($domains as $domain) {
 						$selected = ($domain['domain_uuid'] == $domain_uuid) ? 'selected' : '';

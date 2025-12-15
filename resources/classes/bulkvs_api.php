@@ -123,9 +123,17 @@ class bulkvs_api {
 			throw new Exception("BulkVS API Error: " . $error);
 		}
 
+		// Handle empty responses (some endpoints may return empty body on success)
+		if (empty(trim($response))) {
+			if ($http_code >= 400) {
+				throw new Exception("BulkVS API Error: HTTP Error $http_code");
+			}
+			return [];
+		}
+
 		$result = json_decode($response, true);
 		if (json_last_error() !== JSON_ERROR_NONE) {
-			throw new Exception("BulkVS API Error: Invalid JSON response");
+			throw new Exception("BulkVS API Error: Invalid JSON response - " . json_last_error_msg());
 		}
 
 		if ($http_code >= 400) {
@@ -174,19 +182,19 @@ class bulkvs_api {
 	/**
 	 * Search for available numbers
 	 * @param string $npa Area code (3 digits)
-	 * @param string $npanxx Area code + exchange (6 digits)
+	 * @param string $nxx Exchange code (3 digits, used with npa for 6-digit search)
 	 * @return array Array of available numbers
 	 */
-	public function searchNumbers($npa = null, $npanxx = null) {
+	public function searchNumbers($npa = null, $nxx = null) {
 		$params = [];
 		if (!empty($npa)) {
-			$params['npa'] = $npa;
+			$params['Npa'] = $npa; // API uses capital N, lowercase pa
 		}
-		if (!empty($npanxx)) {
-			$params['npanxx'] = $npanxx;
+		if (!empty($nxx)) {
+			$params['Nxx'] = $nxx; // API uses capital N, lowercase xx
 		}
 		if (empty($params)) {
-			throw new Exception("Either npa or npanxx must be provided");
+			throw new Exception("NPA must be provided");
 		}
 		return $this->request('GET', '/orderTn', $params);
 	}
