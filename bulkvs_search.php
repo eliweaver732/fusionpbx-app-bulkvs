@@ -46,6 +46,8 @@
 	$search_action = $_GET['action'] ?? $_POST['action'] ?? '';
 	$purchase_tn = $_POST['purchase_tn'] ?? '';
 	$purchase_domain_uuid = $_POST['purchase_domain_uuid'] ?? '';
+	$page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+	$rows_per_page = 50; // Limit results per page to prevent memory issues
 	
 	// Parse search query: 3 digits = NPA, 6 digits = NPANXX
 	$npa = '';
@@ -119,7 +121,11 @@
 			$p->delete('dialplan_detail_add', 'temp');
 
 			message::add($text['message-purchase-success']);
-			header("Location: bulkvs_search.php?search=".urlencode($search_query)."&action=search");
+			$redirect_url = "bulkvs_search.php?search=".urlencode($search_query)."&action=search";
+			if (!empty($page)) {
+				$redirect_url .= "&page=".urlencode($page);
+			}
+			header("Location: ".$redirect_url);
 			return;
 		} catch (Exception $e) {
 			message::add($text['message-api-error'] . ': ' . $e->getMessage(), 'negative');
@@ -210,6 +216,69 @@
 		}
 
 		if (!empty($search_results)) {
+			// Pagination: Calculate total pages and slice results
+			$total_results = count($search_results);
+			$total_pages = ceil($total_results / $rows_per_page);
+			$page = max(1, min($page, $total_pages)); // Ensure page is within valid range
+			$offset = ($page - 1) * $rows_per_page;
+			$paginated_results = array_slice($search_results, $offset, $rows_per_page);
+			
+			// Display result count and pagination info
+			echo "<div class='card'>\n";
+			echo "	<div class='subheading'>";
+			echo "		Found ".number_format($total_results)." number(s)";
+			if ($total_pages > 1) {
+				echo " - Page ".$page." of ".$total_pages;
+			}
+			echo "	</div>\n";
+			echo "</div>\n";
+			echo "<br />\n";
+			
+			// Pagination controls
+			if ($total_pages > 1) {
+				echo "<div class='card'>\n";
+				echo "	<div class='content' style='text-align: center; padding: 10px;'>\n";
+				$base_url = "bulkvs_search.php?search=".urlencode($search_query)."&action=search";
+				
+				if ($page > 1) {
+					echo "		<a href='".$base_url."&page=".($page - 1)."' class='btn' style='margin-right: 5px;'>Previous</a>\n";
+				}
+				
+				// Show page numbers (current page ± 2 pages)
+				$start_page = max(1, $page - 2);
+				$end_page = min($total_pages, $page + 2);
+				
+				if ($start_page > 1) {
+					echo "		<a href='".$base_url."&page=1' class='btn' style='margin: 0 2px;'>1</a>\n";
+					if ($start_page > 2) {
+						echo "		<span style='margin: 0 5px;'>...</span>\n";
+					}
+				}
+				
+				for ($i = $start_page; $i <= $end_page; $i++) {
+					if ($i == $page) {
+						echo "		<span class='btn' style='margin: 0 2px; background-color: #007bff; color: white;'>".$i."</span>\n";
+					} else {
+						echo "		<a href='".$base_url."&page=".$i."' class='btn' style='margin: 0 2px;'>".$i."</a>\n";
+					}
+				}
+				
+				if ($end_page < $total_pages) {
+					if ($end_page < $total_pages - 1) {
+						echo "		<span style='margin: 0 5px;'>...</span>\n";
+					}
+					echo "		<a href='".$base_url."&page=".$total_pages."' class='btn' style='margin: 0 2px;'>".$total_pages."</a>\n";
+				}
+				
+				if ($page < $total_pages) {
+					echo "		<a href='".$base_url."&page=".($page + 1)."' class='btn' style='margin-left: 5px;'>Next</a>\n";
+				}
+				
+				echo "	</div>\n";
+				echo "</div>\n";
+				echo "<br />\n";
+			}
+			
 			echo "<div class='card'>\n";
 			echo "<table class='list'>\n";
 			echo "<tr class='list-header'>\n";
@@ -221,7 +290,7 @@
 			}
 			echo "</tr>\n";
 
-			foreach ($search_results as $result) {
+			foreach ($paginated_results as $result) {
 				// API returns fields with spaces: "TN", "Rate Center", "LATA", etc.
 				$tn = $result['TN'] ?? $result['tn'] ?? $result['telephoneNumber'] ?? '';
 				$rate_center = $result['Rate Center'] ?? $result['rateCenter'] ?? '';
@@ -237,6 +306,7 @@
 					echo "			<input type='hidden' name='action' value='purchase'>\n";
 					echo "			<input type='hidden' name='purchase_tn' value='".escape($tn)."'>\n";
 					echo "			<input type='hidden' name='search' value='".escape($search_query)."'>\n";
+					echo "			<input type='hidden' name='page' value='".escape($page)."'>\n";
 					echo "			<select name='purchase_domain_uuid' class='formfld' style='width: auto; margin-right: 5px;'>\n";
 					foreach ($domains as $domain) {
 						$selected = ($domain['domain_uuid'] == $domain_uuid) ? 'selected' : '';
