@@ -12,6 +12,9 @@ $text['title-bulkvs-number-edit']['en-gb'] = "Edit Number";
 $text['title-bulkvs-search']['en-us'] = "Search & Purchase Numbers";
 $text['title-bulkvs-search']['en-gb'] = "Search & Purchase Numbers";
 
+$text['title-bulkvs-e911-edit']['en-us'] = "Edit E911 Record";
+$text['title-bulkvs-e911-edit']['en-gb'] = "Edit E911 Record";
+
 $text['label-telephone-number']['en-us'] = "Telephone Number";
 $text['label-telephone-number']['en-gb'] = "Telephone Number";
 
@@ -65,6 +68,30 @@ $text['label-state']['en-gb'] = "State";
 
 $text['label-e911']['en-us'] = "E911";
 $text['label-e911']['en-gb'] = "E911";
+
+$text['label-caller-name']['en-us'] = "Caller Name";
+$text['label-caller-name']['en-gb'] = "Caller Name";
+
+$text['label-street-number']['en-us'] = "Street Number";
+$text['label-street-number']['en-gb'] = "Street Number";
+
+$text['label-street-name']['en-us'] = "Street Name";
+$text['label-street-name']['en-gb'] = "Street Name";
+
+$text['label-location']['en-us'] = "Location";
+$text['label-location']['en-gb'] = "Location";
+
+$text['label-city']['en-us'] = "City";
+$text['label-city']['en-gb'] = "City";
+
+$text['label-zip']['en-us'] = "Zip";
+$text['label-zip']['en-gb'] = "Zip";
+
+$text['label-sms-numbers']['en-us'] = "SMS Numbers";
+$text['label-sms-numbers']['en-gb'] = "SMS Numbers";
+
+$text['description-sms-numbers']['en-us'] = "Comma-separated list of SMS numbers";
+$text['description-sms-numbers']['en-gb'] = "Comma-separated list of SMS numbers";
 
 $text['label-lata']['en-us'] = "LATA";
 $text['label-lata']['en-gb'] = "LATA";

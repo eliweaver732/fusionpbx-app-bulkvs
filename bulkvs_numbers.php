@@ -406,13 +406,24 @@
 					}
 				}
 				
-				if (!empty($e911_parts)) {
-					$e911_info = implode(', ', $e911_parts);
-				}
+			if (!empty($e911_parts)) {
+				$e911_info = implode(', ', $e911_parts);
 			}
+		}
+		
+		// Make E911 cell clickable if permission exists
+		$e911_edit_url = '';
+		if (permission_exists('bulkvs_edit')) {
+			$e911_edit_url = "bulkvs_e911_edit.php?tn=".urlencode($tn);
+		}
+		
+		if (!empty($e911_edit_url)) {
+			echo "	<td><a href='".$e911_edit_url."' onclick='event.stopPropagation();'>".escape($e911_info)."</a>&nbsp;</td>\n";
+		} else {
 			echo "	<td>".escape($e911_info)."&nbsp;</td>\n";
-			
-			echo "</tr>\n";
+		}
+		
+		echo "</tr>\n";
 		}
 
 		echo "</table>\n";

@@ -276,6 +276,61 @@ class bulkvs_api {
 	public function getE911Records() {
 		return $this->request('GET', '/e911Record', []);
 	}
+
+	/**
+	 * Get a specific E911 record by TN
+	 * @param string $tn Telephone number
+	 * @return array E911 record data or empty array if not found
+	 */
+	public function getE911Record($tn) {
+		$result = $this->request('GET', '/e911Record', ['TN' => $tn]);
+		// API may return array of records or single record
+		if (is_array($result)) {
+			// If it's an array with one element, return that element
+			if (count($result) == 1 && isset($result[0])) {
+				return $result[0];
+			}
+			// If it's an array with multiple elements, find the matching TN
+			if (count($result) > 1) {
+				foreach ($result as $record) {
+					$record_tn = $record['TN'] ?? $record['tn'] ?? '';
+					if ($record_tn == $tn) {
+						return $record;
+					}
+				}
+			}
+		}
+		return $result;
+	}
+
+	/**
+	 * Validate an address
+	 * @param array $address_data Address data with Street Number, Street Name, Location, City, State, Zip
+	 * @return array Validation response with Status, AddressID, and normalized address
+	 */
+	public function validateAddress($address_data) {
+		return $this->request('POST', '/validateAddress', $address_data);
+	}
+
+	/**
+	 * Save/update an E911 record
+	 * @param string $tn Telephone number
+	 * @param string $caller_name Caller name
+	 * @param string $address_id AddressID from validateAddress
+	 * @param array $sms Array of SMS numbers (optional)
+	 * @return array Response data
+	 */
+	public function saveE911Record($tn, $caller_name, $address_id, $sms = []) {
+		$data = [
+			'TN' => $tn,
+			'Caller Name' => $caller_name,
+			'AddressID' => $address_id
+		];
+		if (!empty($sms) && is_array($sms)) {
+			$data['Sms'] = $sms;
+		}
+		return $this->request('POST', '/e911Record', $data);
+	}
 }
 
 ?>
