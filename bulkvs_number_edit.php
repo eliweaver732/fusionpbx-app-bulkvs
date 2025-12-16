@@ -43,18 +43,26 @@
 
 //get http variables
 	$tn = $_GET['tn'] ?? '';
+	$lidb = $_POST['lidb'] ?? '';
 	$portout_pin = $_POST['portout_pin'] ?? '';
-	$cnam = $_POST['cnam'] ?? '';
+	$notes = $_POST['notes'] ?? '';
+	$sms = isset($_POST['sms']) && $_POST['sms'] == '1' ? true : false;
+	$mms = isset($_POST['mms']) && $_POST['mms'] == '1' ? true : false;
 
 //process form submission
 	if (!empty($_POST['action']) && $_POST['action'] == 'save' && !empty($tn)) {
-		$portout_pin = $_POST['portout_pin'] ?? null;
-		$cnam = $_POST['cnam'] ?? null;
+		$lidb = isset($_POST['lidb']) ? $_POST['lidb'] : null;
+		$portout_pin = isset($_POST['portout_pin']) ? $_POST['portout_pin'] : null;
+		$notes = isset($_POST['notes']) ? $_POST['notes'] : null;
+		// Always send SMS/MMS values (true/false) when form is submitted so we can enable/disable them
+		$sms = isset($_POST['sms']) && $_POST['sms'] == '1';
+		$mms = isset($_POST['mms']) && $_POST['mms'] == '1';
 
 		try {
 			require_once "resources/classes/bulkvs_api.php";
 			$bulkvs_api = new bulkvs_api($settings);
-			$bulkvs_api->updateNumber($tn, $portout_pin, $cnam);
+			// Always pass SMS/MMS (not null) so API can update them
+			$bulkvs_api->updateNumber($tn, $lidb, $portout_pin, $notes, $sms, $mms);
 			
 			message::add($text['message-update']);
 			header("Location: bulkvs_numbers.php");
@@ -65,44 +73,40 @@
 	}
 
 //get current number details from API
+	$current_lidb = '';
 	$current_portout_pin = '';
-	$current_cnam = '';
-	$trunk_group = '';
+	$current_notes = '';
+	$current_sms = false;
+	$current_mms = false;
 	if (!empty($tn)) {
 		try {
 			require_once "resources/classes/bulkvs_api.php";
 			$bulkvs_api = new bulkvs_api($settings);
-			$trunk_group = $settings->get('bulkvs', 'trunk_group', '');
-			$numbers = $bulkvs_api->getNumbers($trunk_group);
+			$number = $bulkvs_api->getNumber($tn);
 			
-			// Find the specific number
-			if (isset($numbers['data']) && is_array($numbers['data'])) {
-				$numbers = $numbers['data'];
-			} elseif (is_array($numbers)) {
-				// numbers is already an array
-			} else {
-				$numbers = [];
-			}
+			// Extract fields from API response
+			$current_lidb = $number['Lidb'] ?? $number['lidb'] ?? '';
+			$current_portout_pin = $number['Portout Pin'] ?? $number['portoutPin'] ?? '';
+			$current_notes = $number['ReferenceID'] ?? $number['referenceID'] ?? '';
 			
-			foreach ($numbers as $number) {
-				$number_tn = $number['tn'] ?? $number['telephoneNumber'] ?? '';
-				if ($number_tn == $tn) {
-					$current_portout_pin = $number['portoutPin'] ?? '';
-					$current_cnam = $number['cnam'] ?? '';
-					break;
-				}
+			// Extract SMS/MMS from nested Messaging object
+			if (isset($number['Messaging']) && is_array($number['Messaging'])) {
+				$messaging = $number['Messaging'];
+				$current_sms = isset($messaging['Sms']) ? (bool)$messaging['Sms'] : false;
+				$current_mms = isset($messaging['Mms']) ? (bool)$messaging['Mms'] : false;
 			}
 		} catch (Exception $e) {
 			message::add($text['message-api-error'] . ': ' . $e->getMessage(), 'negative');
 		}
 	}
 
-//set default values
-	if (empty($portout_pin)) {
+//set default values (use POST values if set, otherwise use current values)
+	if (empty($_POST['action']) || $_POST['action'] != 'save') {
+		$lidb = $current_lidb;
 		$portout_pin = $current_portout_pin;
-	}
-	if (empty($cnam)) {
-		$cnam = $current_cnam;
+		$notes = $current_notes;
+		$sms = $current_sms;
+		$mms = $current_mms;
 	}
 
 //create token
@@ -136,12 +140,34 @@
 	echo "	<div class='content'>\n";
 	echo "		<table class='no_hover'>\n";
 	echo "			<tr>\n";
-	echo "				<td class='vncell' style='vertical-align: top;'>".$text['label-portout-pin']."</td>\n";
-	echo "				<td class='vtable'><input type='text' class='formfld' name='portout_pin' value='".escape($portout_pin)."'></td>\n";
+	echo "				<td class='vncell' style='vertical-align: top;'>".$text['label-lidb']."</td>\n";
+	echo "				<td class='vtable'><input type='text' class='formfld' name='lidb' value='".escape($lidb)."' maxlength='255'></td>\n";
 	echo "			</tr>\n";
 	echo "			<tr>\n";
-	echo "				<td class='vncell' style='vertical-align: top;'>".$text['label-cnam']."</td>\n";
-	echo "				<td class='vtable'><input type='text' class='formfld' name='cnam' value='".escape($cnam)."'></td>\n";
+	echo "				<td class='vncell' style='vertical-align: top;'>".$text['label-portout-pin']."</td>\n";
+	echo "				<td class='vtable'><input type='text' class='formfld' name='portout_pin' value='".escape($portout_pin)."' maxlength='10'></td>\n";
+	echo "			</tr>\n";
+	echo "			<tr>\n";
+	echo "				<td class='vncell' style='vertical-align: top;'>".$text['label-notes']."</td>\n";
+	echo "				<td class='vtable'><input type='text' class='formfld' name='notes' value='".escape($notes)."' maxlength='255'></td>\n";
+	echo "			</tr>\n";
+	echo "			<tr>\n";
+	echo "				<td class='vncell' style='vertical-align: top;'>".$text['label-sms']."</td>\n";
+	echo "				<td class='vtable'>\n";
+	echo "					<select class='formfld' name='sms'>\n";
+	echo "						<option value='0'".($sms ? '' : " selected").">".$text['label-disabled']."</option>\n";
+	echo "						<option value='1'".($sms ? " selected" : '').">".$text['label-enabled']."</option>\n";
+	echo "					</select>\n";
+	echo "				</td>\n";
+	echo "			</tr>\n";
+	echo "			<tr>\n";
+	echo "				<td class='vncell' style='vertical-align: top;'>".$text['label-mms']."</td>\n";
+	echo "				<td class='vtable'>\n";
+	echo "					<select class='formfld' name='mms'>\n";
+	echo "						<option value='0'".($mms ? '' : " selected").">".$text['label-disabled']."</option>\n";
+	echo "						<option value='1'".($mms ? " selected" : '').">".$text['label-enabled']."</option>\n";
+	echo "					</select>\n";
+	echo "				</td>\n";
 	echo "			</tr>\n";
 	echo "		</table>\n";
 	echo "	</div>\n";

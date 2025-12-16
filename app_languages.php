@@ -39,6 +39,18 @@ $text['label-lidb']['en-gb'] = "LIDB";
 $text['label-notes']['en-us'] = "Notes";
 $text['label-notes']['en-gb'] = "Notes";
 
+$text['label-sms']['en-us'] = "SMS";
+$text['label-sms']['en-gb'] = "SMS";
+
+$text['label-mms']['en-us'] = "MMS";
+$text['label-mms']['en-gb'] = "MMS";
+
+$text['label-enabled']['en-us'] = "Enabled";
+$text['label-enabled']['en-gb'] = "Enabled";
+
+$text['label-disabled']['en-us'] = "Disabled";
+$text['label-disabled']['en-gb'] = "Disabled";
+
 $text['label-npa']['en-us'] = "Area Code (NPA)";
 $text['label-npa']['en-gb'] = "Area Code (NPA)";
 

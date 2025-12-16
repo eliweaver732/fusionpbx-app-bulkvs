@@ -152,30 +152,55 @@ class bulkvs_api {
 	public function getNumbers($trunk_group = null) {
 		$params = [];
 		if (!empty($trunk_group)) {
-			$params['trunkGroup'] = $trunk_group;
+			$params['Trunk Group'] = $trunk_group;
 		}
 		return $this->request('GET', '/tnRecord', $params);
 	}
 
 	/**
-	 * Update a number's Portout PIN and CNAM
+	 * Get a single number record by telephone number
 	 * @param string $tn Telephone number
-	 * @param string $portout_pin Portout PIN
-	 * @param string $cnam CNAM value
+	 * @return array Number record
+	 */
+	public function getNumber($tn) {
+		$params = ['Number' => $tn];
+		$result = $this->request('GET', '/tnRecord', $params);
+		// API returns an array, get first element if it exists
+		if (is_array($result) && !empty($result)) {
+			return $result[0];
+		}
+		return $result;
+	}
+
+	/**
+	 * Update a number's fields
+	 * @param string $tn Telephone number (required)
+	 * @param string $lidb LIDB/CNAM value (optional)
+	 * @param string $portout_pin Portout PIN (optional)
+	 * @param string $reference_id Notes/ReferenceID (optional)
+	 * @param bool $sms SMS enabled (optional)
+	 * @param bool $mms MMS enabled (optional)
 	 * @return array Response data
 	 */
-	public function updateNumber($tn, $portout_pin = null, $cnam = null) {
-		$data = [];
+	public function updateNumber($tn, $lidb = null, $portout_pin = null, $reference_id = null, $sms = null, $mms = null) {
+		$data = ['TN' => $tn];
+		
+		if ($lidb !== null) {
+			$data['Lidb'] = $lidb;
+		}
 		if ($portout_pin !== null) {
-			$data['portoutPin'] = $portout_pin;
+			$data['Portout Pin'] = $portout_pin;
 		}
-		if ($cnam !== null) {
-			$data['cnam'] = $cnam;
+		if ($reference_id !== null) {
+			$data['ReferenceID'] = $reference_id;
 		}
-		if (empty($data)) {
-			throw new Exception("At least one field (portout_pin or cnam) must be provided");
+		if ($sms !== null) {
+			$data['Sms'] = $sms ? true : false;
 		}
-		$data['tn'] = $tn;
+		if ($mms !== null) {
+			$data['Mms'] = $mms ? true : false;
+		}
+		
 		return $this->request('POST', '/tnRecord', $data);
 	}
 
