@@ -292,23 +292,26 @@
 			echo "<table class='list' id='results_table'>\n";
 			echo "<tr class='list-header'>\n";
 			echo "	<th>".$text['label-telephone-number']."</th>\n";
+			echo "	<th>".$text['label-tier']."</th>\n";
 			echo "	<th>".$text['label-rate-center']."</th>\n";
-			echo "	<th>".$text['label-lata']."</th>\n";
+			echo "	<th>".$text['label-state']."</th>\n";
 			if (permission_exists('bulkvs_purchase')) {
 				echo "	<td class='action-button'>&nbsp;</td>\n";
 			}
 			echo "</tr>\n";
 
 			foreach ($paginated_results as $result) {
-				// API returns fields with spaces: "TN", "Rate Center", "LATA", etc.
+				// API returns fields with spaces: "TN", "Rate Center", "State", "Tier", etc.
 				$tn = $result['TN'] ?? $result['tn'] ?? $result['telephoneNumber'] ?? '';
+				$tier = $result['Tier'] ?? $result['tier'] ?? '';
 				$rate_center = $result['Rate Center'] ?? $result['rateCenter'] ?? '';
-				$lata = $result['LATA'] ?? $result['lata'] ?? '';
+				$state = $result['State'] ?? $result['state'] ?? '';
 
 				echo "<tr class='list-row'>\n";
 				echo "	<td>".escape($tn)."</td>\n";
+				echo "	<td>".escape($tier)."&nbsp;</td>\n";
 				echo "	<td>".escape($rate_center)."&nbsp;</td>\n";
-				echo "	<td>".escape($lata)."&nbsp;</td>\n";
+				echo "	<td>".escape($state)."&nbsp;</td>\n";
 				if (permission_exists('bulkvs_purchase')) {
 					echo "	<td class='action-button'>\n";
 					echo "		<form method='post' action='' style='display: inline;'>\n";

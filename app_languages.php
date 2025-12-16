@@ -60,6 +60,9 @@ $text['label-npanxx']['en-gb'] = "Area Code + Exchange (NPANXX)";
 $text['label-rate-center']['en-us'] = "Rate Center";
 $text['label-rate-center']['en-gb'] = "Rate Center";
 
+$text['label-state']['en-us'] = "State";
+$text['label-state']['en-gb'] = "State";
+
 $text['label-lata']['en-us'] = "LATA";
 $text['label-lata']['en-gb'] = "LATA";
 
