@@ -286,9 +286,15 @@ class bulkvs_api {
 		$result = $this->request('GET', '/e911Record', ['TN' => $tn]);
 		// API may return array of records or single record
 		if (is_array($result)) {
-			// If it's an array with one element, return that element
+			// If it's an array with one element, check if it matches the requested TN
 			if (count($result) == 1 && isset($result[0])) {
-				return $result[0];
+				$record_tn = $result[0]['TN'] ?? $result[0]['tn'] ?? '';
+				// Only return if it matches the requested TN
+				if ($record_tn == $tn) {
+					return $result[0];
+				}
+				// If it doesn't match, return empty array
+				return [];
 			}
 			// If it's an array with multiple elements, find the matching TN
 			if (count($result) > 1) {
@@ -298,9 +304,12 @@ class bulkvs_api {
 						return $record;
 					}
 				}
+				// No matching TN found
+				return [];
 			}
 		}
-		return $result;
+		// If result is not an array or is empty, return empty array
+		return [];
 	}
 
 	/**

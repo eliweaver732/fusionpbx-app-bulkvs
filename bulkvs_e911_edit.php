@@ -125,26 +125,15 @@
 	$current_street_name = '';
 	$current_location = '';
 
-	if (!empty($tn)) {
+		if (!empty($tn)) {
 		try {
 			require_once "resources/classes/bulkvs_api.php";
 			$bulkvs_api = new bulkvs_api($settings);
-			$e911_response = $bulkvs_api->getE911Record($tn);
+			$e911_record = $bulkvs_api->getE911Record($tn);
 			
-			// Handle response - may be array or object with data property
-			$e911_record = null;
-			if (isset($e911_response['data']) && is_array($e911_response['data'])) {
-				$e911_record = $e911_response['data'];
-			} elseif (is_array($e911_response) && !empty($e911_response)) {
-				// If it's an array, check if first element is the record
-				if (isset($e911_response[0])) {
-					$e911_record = $e911_response[0];
-				} else {
-					$e911_record = $e911_response;
-				}
-			}
-
-			if (!empty($e911_record)) {
+			// Verify the record matches the requested TN before using it
+			$record_tn = $e911_record['TN'] ?? $e911_record['tn'] ?? '';
+			if (!empty($e911_record) && !empty($record_tn) && $record_tn == $tn) {
 				$current_caller_name = $e911_record['Caller Name'] ?? $e911_record['callerName'] ?? '';
 				$current_address_line1 = $e911_record['Address Line 1'] ?? $e911_record['addressLine1'] ?? '';
 				$current_address_line2 = $e911_record['Address Line 2'] ?? $e911_record['addressLine2'] ?? '';
