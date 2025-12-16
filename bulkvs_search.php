@@ -406,9 +406,9 @@
 
 	echo "</div>\n";
 
-	// Form buttons (outside form_grid, floating to the left)
+	// Form buttons (outside form_grid, floating to the right)
 	button::$collapse = false;
-	echo "<div style='display: flex; justify-content: flex-start; padding-top: 15px; margin-left: 20px; white-space: nowrap;'>";
+	echo "<div style='display: flex; justify-content: flex-end; padding-top: 15px; margin-left: 20px; white-space: nowrap;'>";
 	echo button::create(['label'=>$text['button-reset'],'icon'=>$settings->get('theme', 'button_icon_reset'),'type'=>'button','link'=>'bulkvs_search.php','style'=>'margin-right: 15px;']);
 	echo button::create(['label'=>$text['button-search'],'icon'=>$settings->get('theme', 'button_icon_search'),'type'=>'submit','id'=>'btn_search','name'=>'submit']);
 	echo "</div>\n";
