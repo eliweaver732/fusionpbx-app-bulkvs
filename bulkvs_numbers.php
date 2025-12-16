@@ -114,22 +114,27 @@
 				$parameters['tn_' . $index] = $tn_10;
 			}
 			
-			$sql = "select distinct destination_number, domain_uuid ";
+			$sql = "select distinct destination_number, domain_uuid, destination_uuid ";
 			$sql .= "from v_destinations ";
 			$sql .= "where destination_number in (" . implode(', ', $placeholders) . ") ";
 			$sql .= "and destination_enabled = 'true' ";
 			$destinations = $database->select($sql, $parameters, 'all');
 			unset($sql, $parameters);
 			
-			// Build map of destination_number -> domain_uuid
+			// Build map of destination_number -> domain_uuid and destination_uuid
 			$domain_uuids = [];
+			$destination_uuids = [];
 			foreach ($destinations as $dest) {
 				$dest_number = $dest['destination_number'] ?? '';
 				$dest_domain_uuid = $dest['domain_uuid'] ?? '';
+				$dest_uuid = $dest['destination_uuid'] ?? '';
 				if (!empty($dest_number) && !empty($dest_domain_uuid)) {
-					// Store domain_uuid for this number (use first match if multiple)
+					// Store domain_uuid and destination_uuid for this number (use first match if multiple)
 					if (!isset($domain_uuids[$dest_number])) {
 						$domain_uuids[$dest_number] = $dest_domain_uuid;
+						if (!empty($dest_uuid)) {
+							$destination_uuids[$dest_number] = $dest_uuid;
+						}
 					}
 				}
 			}
@@ -160,10 +165,13 @@
 					}
 				}
 				
-				// Build final map: destination_number -> domain_name
+				// Build final map: destination_number -> ['domain_name' => ..., 'destination_uuid' => ...]
 				foreach ($domain_uuids as $dest_number => $domain_uuid) {
 					if (isset($domain_names[$domain_uuid])) {
-						$domain_map[$dest_number] = $domain_names[$domain_uuid];
+						$domain_map[$dest_number] = [
+							'domain_name' => $domain_names[$domain_uuid],
+							'destination_uuid' => $destination_uuids[$dest_number] ?? ''
+						];
 					}
 				}
 			}
@@ -269,16 +277,32 @@
 			
 			// Look up domain for this number
 			$domain_name = '';
+			$destination_uuid = '';
+			$domain_info = null;
 			if (!empty($tn)) {
 				// Convert 11-digit to 10-digit (remove leading "1")
 				$tn_10 = preg_replace('/^1/', '', $tn);
 				if (strlen($tn_10) == 10 && isset($domain_map[$tn_10])) {
-					$domain_name = $domain_map[$tn_10];
+					$domain_info = $domain_map[$tn_10];
+					$domain_name = is_array($domain_info) ? ($domain_info['domain_name'] ?? '') : $domain_info;
+					$destination_uuid = is_array($domain_info) ? ($domain_info['destination_uuid'] ?? '') : '';
 				}
+			}
+			
+			// Create edit URL for the row
+			$edit_url = '';
+			if (permission_exists('bulkvs_edit')) {
+				$edit_url = "bulkvs_number_edit.php?tn=".urlencode($tn);
+			}
+			
+			// Create destination edit URL
+			$destination_edit_url = '';
+			if (!empty($destination_uuid) && permission_exists('destination_edit')) {
+				$destination_edit_url = "../destinations/destination_edit.php?id=".urlencode($destination_uuid);
 			}
 
 			//show the data
-			echo "<tr class='list-row'>\n";
+			echo "<tr class='list-row'".(!empty($edit_url) ? " href='".$edit_url."'" : "").">\n";
 			echo "	<td class='no-wrap'>".escape($tn)."</td>\n";
 			echo "	<td>".escape($status)."&nbsp;</td>\n";
 			echo "	<td class='no-wrap'>".escape($activation_date)."&nbsp;</td>\n";
@@ -286,7 +310,11 @@
 			echo "	<td>".escape($tier)."&nbsp;</td>\n";
 			echo "	<td>".escape($lidb)."&nbsp;</td>\n";
 			echo "	<td>".escape($notes)."&nbsp;</td>\n";
-			echo "	<td>".escape($domain_name)."&nbsp;</td>\n";
+			if (!empty($destination_edit_url)) {
+				echo "	<td><a href='".$destination_edit_url."' onclick='event.stopPropagation();'>".escape($domain_name)."</a>&nbsp;</td>\n";
+			} else {
+				echo "	<td>".escape($domain_name)."&nbsp;</td>\n";
+			}
 			echo "</tr>\n";
 		}
 
