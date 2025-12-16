@@ -42,6 +42,10 @@
 //initialize the settings object
 	$settings = new settings(['database' => $database, 'domain_uuid' => $domain_uuid]);
 
+//create token (needed early for form validation)
+	$object = new token;
+	$token = $object->create($_SERVER['PHP_SELF']);
+
 //get http variables
 	$search_query = $_GET['search'] ?? $_POST['search'] ?? '';
 	$search_action = $_GET['action'] ?? $_POST['action'] ?? '';
@@ -65,6 +69,13 @@
 	if ($search_action == 'purchase' && !empty($purchase_tn) && !empty($purchase_domain_uuid)) {
 		if (!permission_exists('bulkvs_purchase')) {
 			message::add("Access denied", 'negative');
+			header("Location: bulkvs_search.php");
+			return;
+		}
+		
+		// Validate token
+		if (!$object->validate($_SERVER['PHP_SELF'])) {
+			message::add("Invalid token", 'negative');
 			header("Location: bulkvs_search.php");
 			return;
 		}
@@ -120,10 +131,8 @@
 			$p->delete('dialplan_detail_add', 'temp');
 
 			message::add($text['message-purchase-success']);
-			$redirect_url = "bulkvs_search.php?search=".urlencode($search_query)."&action=search";
-			if (isset($_GET['page'])) {
-				$redirect_url .= "&page=".urlencode($_GET['page']);
-			}
+			// Redirect to destination edit page
+			$redirect_url = "../destinations/destination_edit.php?id=".urlencode($destination_uuid);
 			header("Location: ".$redirect_url);
 			return;
 		} catch (Exception $e) {
@@ -188,10 +197,6 @@
 		$parameters['domain_uuid'] = $domain_uuid;
 		$domains = $database->select($sql, $parameters, 'all');
 	}
-
-//create token
-	$object = new token;
-	$token = $object->create($_SERVER['PHP_SELF']);
 
 //include the header
 	$document['title'] = $text['title-bulkvs-search'];

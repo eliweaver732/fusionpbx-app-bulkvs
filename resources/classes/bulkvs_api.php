@@ -232,8 +232,8 @@ class bulkvs_api {
 	 */
 	public function purchaseNumber($tn, $trunk_group) {
 		$data = [
-			'tn' => $tn,
-			'trunkGroup' => $trunk_group
+			'TN' => $tn,
+			'Trunk Group' => $trunk_group
 		];
 		return $this->request('POST', '/orderTn', $data);
 	}
