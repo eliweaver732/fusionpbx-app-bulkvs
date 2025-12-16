@@ -320,43 +320,8 @@
 	echo $text['description-bulkvs-search']."\n";
 	echo "<br /><br />\n";
 
-	// Search form with purchase fields
-	echo "<div class='card'>\n";
-	echo "	<div class='subheading'>".$text['button-search']."</div>\n";
-	echo "	<div class='content'>\n";
-	echo "		<table class='no_hover' style='width: 100%;'>\n";
-	echo "			<tr>\n";
-	echo "								<td style='width: 50%; vertical-align: top;'>\n";
-		echo "					<form method='get' action=''>\n";
-		echo "						<input type='hidden' name='action' value='search'>\n";
-		if (permission_exists('bulkvs_purchase')) {
-			// Preserve purchase field values when searching
-			if (!empty($_GET['purchase_domain_uuid'])) {
-				echo "						<input type='hidden' name='purchase_domain_uuid' value='".escape($_GET['purchase_domain_uuid'])."'>\n";
-			}
-			if (!empty($_GET['purchase_lidb'])) {
-				echo "						<input type='hidden' name='purchase_lidb' value='".escape($_GET['purchase_lidb'])."'>\n";
-			}
-			if (!empty($_GET['purchase_portout_pin'])) {
-				echo "						<input type='hidden' name='purchase_portout_pin' value='".escape($_GET['purchase_portout_pin'])."'>\n";
-			}
-			if (!empty($_GET['purchase_reference_id'])) {
-				echo "						<input type='hidden' name='purchase_reference_id' value='".escape($_GET['purchase_reference_id'])."'>\n";
-			}
-		}
-		echo "						<table class='no_hover'>\n";
-	echo "							<tr>\n";
-	echo "								<td class='vncell'>Search</td>\n";
-	echo "								<td class='vtable'><input type='text' class='formfld' name='search' value='".escape($search_query)."' maxlength='6' placeholder='3 digits (area code) or 6 digits (area code + exchange)'></td>\n";
-	echo "							</tr>\n";
-	echo "							<tr>\n";
-	echo "								<td colspan='2'><input type='submit' class='btn' value='".$text['button-search']."'></td>\n";
-	echo "							</tr>\n";
-	echo "						</table>\n";
-	echo "					</form>\n";
-	echo "				</td>\n";
+	// Generate random 8-digit portout PIN (only if not already set)
 	if (permission_exists('bulkvs_purchase')) {
-		// Generate random 8-digit portout PIN (only if not already set)
 		if (empty($_POST['purchase_portout_pin']) && empty($_GET['purchase_portout_pin'])) {
 			$random_pin = str_pad(rand(10000000, 99999999), 8, '0', STR_PAD_LEFT);
 		} else {
@@ -372,41 +337,86 @@
 		$purchase_portout_pin = $_POST['purchase_portout_pin'] ?? $_GET['purchase_portout_pin'] ?? $random_pin;
 		$purchase_reference_id = $_POST['purchase_reference_id'] ?? $_GET['purchase_reference_id'] ?? '';
 		$purchase_domain_uuid = $_POST['purchase_domain_uuid'] ?? $_GET['purchase_domain_uuid'] ?? $domain_uuid;
-		
-		echo "				<td style='width: 50%; vertical-align: top; padding-left: 20px;'>\n";
-		echo "					<div class='subheading'>Purchase Settings</div>\n";
-		echo "					<table class='no_hover'>\n";
-		echo "						<tr>\n";
-		echo "							<td class='vncell'>".$text['label-domain']."</td>\n";
-		echo "							<td class='vtable'>\n";
-		echo "								<select name='purchase_domain_uuid' id='purchase_domain_uuid' class='formfld'>\n";
+	}
+
+	// Search form with purchase fields
+	echo "<form name='frm' id='frm' method='get'>\n";
+	echo "<input type='hidden' name='action' value='search'>\n";
+
+	echo "<div class='card'>\n";
+	echo "<div class='form_grid'>\n";
+
+	// Search field
+	echo "	<div class='form_set'>\n";
+	echo "		<div class='label'>\n";
+	echo "			".$text['button-search']."\n";
+	echo "		</div>\n";
+	echo "		<div class='field'>\n";
+	echo "			<input type='text' class='formfld' name='search' value='".escape($search_query)."' maxlength='6' placeholder='3 digits (area code) or 6 digits (area code + exchange)'>\n";
+	echo "		</div>\n";
+	echo "	</div>\n";
+
+	// Purchase fields (only if permission exists)
+	if (permission_exists('bulkvs_purchase')) {
+		// Domain
+		echo "	<div class='form_set'>\n";
+		echo "		<div class='label'>\n";
+		echo "			".$text['label-domain']."\n";
+		echo "		</div>\n";
+		echo "		<div class='field'>\n";
+		echo "			<select name='purchase_domain_uuid' id='purchase_domain_uuid' class='formfld'>\n";
 		foreach ($domains as $domain) {
 			$selected = ($domain['domain_uuid'] == $purchase_domain_uuid) ? 'selected' : '';
-			echo "									<option value='".escape($domain['domain_uuid'])."' ".$selected.">".escape($domain['domain_name'])."</option>\n";
+			echo "				<option value='".escape($domain['domain_uuid'])."' ".$selected.">".escape($domain['domain_name'])."</option>\n";
 		}
-		echo "								</select>\n";
-		echo "							</td>\n";
-		echo "						</tr>\n";
-		echo "						<tr>\n";
-		echo "							<td class='vncell'>".$text['label-lidb']."</td>\n";
-		echo "							<td class='vtable'><input type='text' class='formfld' name='purchase_lidb' id='purchase_lidb' value='".escape($purchase_lidb)."' maxlength='15' pattern='[A-Z0-9]{0,15}' title='Up to 15 alphanumeric characters (letters will be converted to uppercase)' oninput=\"this.value = this.value.replace(/[^A-Z0-9]/gi, '').toUpperCase();\"></td>\n";
-		echo "						</tr>\n";
-		echo "						<tr>\n";
-		echo "							<td class='vncell'>".$text['label-portout-pin']."</td>\n";
-		echo "							<td class='vtable'><input type='text' class='formfld' name='purchase_portout_pin' id='purchase_portout_pin' value='".escape($purchase_portout_pin)."' maxlength='10' pattern='[0-9]{6,10}' title='6-10 digit numeric PIN'></td>\n";
-		echo "						</tr>\n";
-		echo "						<tr>\n";
-		echo "							<td class='vncell'>".$text['label-notes']."</td>\n";
-		echo "							<td class='vtable'><input type='text' class='formfld' name='purchase_reference_id' id='purchase_reference_id' value='".escape($purchase_reference_id)."' maxlength='255'></td>\n";
-		echo "						</tr>\n";
-		echo "					</table>\n";
-		echo "				</td>\n";
+		echo "			</select>\n";
+		echo "		</div>\n";
+		echo "	</div>\n";
+
+		// LIDB
+		echo "	<div class='form_set'>\n";
+		echo "		<div class='label'>\n";
+		echo "			".$text['label-lidb']."\n";
+		echo "		</div>\n";
+		echo "		<div class='field'>\n";
+		echo "			<input type='text' class='formfld' name='purchase_lidb' id='purchase_lidb' value='".escape($purchase_lidb)."' maxlength='15' pattern='[A-Z0-9 ]{0,15}' title='Up to 15 alphanumeric characters and spaces (letters will be converted to uppercase)' oninput=\"this.value = this.value.replace(/[^A-Z0-9 ]/gi, '').toUpperCase();\">\n";
+		echo "		</div>\n";
+		echo "	</div>\n";
+
+		// Portout PIN
+		echo "	<div class='form_set'>\n";
+		echo "		<div class='label'>\n";
+		echo "			".$text['label-portout-pin']."\n";
+		echo "		</div>\n";
+		echo "		<div class='field'>\n";
+		echo "			<input type='text' class='formfld' name='purchase_portout_pin' id='purchase_portout_pin' value='".escape($purchase_portout_pin)."' maxlength='10' pattern='[0-9]{6,10}' title='6-10 digit numeric PIN'>\n";
+		echo "		</div>\n";
+		echo "	</div>\n";
+
+		// Reference ID / Notes
+		echo "	<div class='form_set'>\n";
+		echo "		<div class='label'>\n";
+		echo "			".$text['label-notes']."\n";
+		echo "		</div>\n";
+		echo "		<div class='field'>\n";
+		echo "			<input type='text' class='formfld' name='purchase_reference_id' id='purchase_reference_id' value='".escape($purchase_reference_id)."' maxlength='255'>\n";
+		echo "		</div>\n";
+		echo "	</div>\n";
 	}
-	echo "			</tr>\n";
-	echo "		</table>\n";
+
+	// Form buttons
+	echo "	<div class='form_set'>\n";
+	echo "		<div class='label'></div>\n";
+	echo "		<div class='field'>\n";
+	echo button::create(['label'=>$text['button-reset'],'icon'=>$settings->get('theme', 'button_icon_reset'),'type'=>'button','link'=>'bulkvs_search.php','style'=>'margin-right: 15px;']);
+	echo button::create(['label'=>$text['button-search'],'icon'=>$settings->get('theme', 'button_icon_search'),'type'=>'submit','id'=>'btn_search','name'=>'submit']);
+	echo "		</div>\n";
 	echo "	</div>\n";
+
+	echo "</div>\n";
 	echo "</div>\n";
 	echo "<br />\n";
+	echo "</form>\n";
 
 	// Search results
 	if ($search_action == 'search' || $search_action == 'purchase') {

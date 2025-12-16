@@ -87,6 +87,9 @@ $text['button-edit']['en-gb'] = "Edit";
 $text['button-cancel']['en-us'] = "Cancel";
 $text['button-cancel']['en-gb'] = "Cancel";
 
+$text['button-reset']['en-us'] = "Reset";
+$text['button-reset']['en-gb'] = "Reset";
+
 $text['label-select']['en-us'] = "Select";
 $text['label-select']['en-gb'] = "Select";
 
