@@ -250,14 +250,12 @@
 	echo "	<div style='clear: both;'></div>\n";
 	echo "</div>\n";
 
+	// Display description with trunk group name if available
 	if (!empty($trunk_group)) {
-		echo "<div class='card'>\n";
-		echo "	<div class='subheading'>".$text['label-trunk-group'].": ".escape($trunk_group)."</div>\n";
-		echo "</div>\n";
-		echo "<br />\n";
+		echo "View and manage BulkVS phone numbers filtered by trunk group: ".escape($trunk_group)."\n";
+	} else {
+		echo $text['description-bulkvs-numbers']."\n";
 	}
-
-	echo $text['description-bulkvs-numbers']."\n";
 	echo "<br /><br />\n";
 
 	if (!empty($error_message)) {
