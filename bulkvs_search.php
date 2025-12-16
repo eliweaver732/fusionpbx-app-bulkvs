@@ -352,7 +352,7 @@
 	echo "			".$text['button-search']."\n";
 	echo "		</div>\n";
 	echo "		<div class='field'>\n";
-	echo "			<input type='text' class='formfld' name='search' value='".escape($search_query)."' maxlength='6' placeholder='3 digits (area code) or 6 digits (area code + exchange)'>\n";
+	echo "			<input type='text' class='formfld' name='search' value='".escape($search_query)."' maxlength='6' placeholder='3 digits (area code) or 6 digits (area code + exchange)' required='required'>\n";
 	echo "		</div>\n";
 	echo "	</div>\n";
 
@@ -404,15 +404,13 @@
 		echo "	</div>\n";
 	}
 
-	// Form buttons
-	echo "	<div class='form_set'>\n";
-	echo "		<div class='label'></div>\n";
-	echo "		<div class='field'>\n";
+	echo "</div>\n";
+
+	// Form buttons (outside form_grid, floating to the left)
+	button::$collapse = false;
+	echo "<div style='display: flex; justify-content: flex-start; padding-top: 15px; margin-left: 20px; white-space: nowrap;'>";
 	echo button::create(['label'=>$text['button-reset'],'icon'=>$settings->get('theme', 'button_icon_reset'),'type'=>'button','link'=>'bulkvs_search.php','style'=>'margin-right: 15px;']);
 	echo button::create(['label'=>$text['button-search'],'icon'=>$settings->get('theme', 'button_icon_search'),'type'=>'submit','id'=>'btn_search','name'=>'submit']);
-	echo "		</div>\n";
-	echo "	</div>\n";
-
 	echo "</div>\n";
 	echo "</div>\n";
 	echo "<br />\n";
