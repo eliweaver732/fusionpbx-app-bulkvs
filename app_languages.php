@@ -24,6 +24,21 @@ $text['label-portout-pin']['en-gb'] = "Portout PIN";
 $text['label-cnam']['en-us'] = "CNAM";
 $text['label-cnam']['en-gb'] = "CNAM";
 
+$text['label-status']['en-us'] = "Status";
+$text['label-status']['en-gb'] = "Status";
+
+$text['label-activation-date']['en-us'] = "Activation Date";
+$text['label-activation-date']['en-gb'] = "Activation Date";
+
+$text['label-tier']['en-us'] = "Tier";
+$text['label-tier']['en-gb'] = "Tier";
+
+$text['label-lidb']['en-us'] = "LIDB";
+$text['label-lidb']['en-gb'] = "LIDB";
+
+$text['label-notes']['en-us'] = "Notes";
+$text['label-notes']['en-gb'] = "Notes";
+
 $text['label-npa']['en-us'] = "Area Code (NPA)";
 $text['label-npa']['en-gb'] = "Area Code (NPA)";
 

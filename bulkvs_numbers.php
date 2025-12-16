@@ -62,7 +62,7 @@
 		
 		// Filter out empty/invalid entries
 		$numbers = array_filter($numbers, function($number) {
-			$tn = $number['tn'] ?? $number['TN'] ?? $number['telephoneNumber'] ?? '';
+			$tn = $number['TN'] ?? $number['tn'] ?? $number['telephoneNumber'] ?? '';
 			return !empty($tn);
 		});
 		$numbers = array_values($numbers); // Re-index array
@@ -139,24 +139,53 @@
 		echo "<table class='list' id='numbers_table'>\n";
 		echo "<tr class='list-header'>\n";
 		echo "	<th>".$text['label-telephone-number']."</th>\n";
-		echo "	<th>".$text['label-trunk-group']."</th>\n";
-		echo "	<th>".$text['label-portout-pin']."</th>\n";
-		echo "	<th>".$text['label-cnam']."</th>\n";
+		echo "	<th>".$text['label-status']."</th>\n";
+		echo "	<th>".$text['label-activation-date']."</th>\n";
+		echo "	<th>".$text['label-rate-center']."</th>\n";
+		echo "	<th>".$text['label-tier']."</th>\n";
+		echo "	<th>".$text['label-lidb']."</th>\n";
+		echo "	<th>".$text['label-notes']."</th>\n";
 		if (permission_exists('bulkvs_edit')) {
 			echo "	<td class='action-button'>&nbsp;</td>\n";
 		}
 		echo "</tr>\n";
 
 		foreach ($paginated_numbers as $number) {
-			// Try multiple possible field name variations from the API
-			$tn = $number['tn'] ?? $number['TN'] ?? $number['telephoneNumber'] ?? '';
-			$tg = $number['trunkGroup'] ?? $number['Trunk Group'] ?? '';
-			$portout_pin = $number['portoutPin'] ?? $number['Portout PIN'] ?? '';
-			$cnam = $number['cnam'] ?? $number['CNAM'] ?? '';
+			// Extract fields from API response (handling nested structures)
+			$tn = $number['TN'] ?? $number['tn'] ?? $number['telephoneNumber'] ?? '';
+			$status = $number['Status'] ?? $number['status'] ?? '';
+			$activation_date = '';
+			$rate_center = '';
+			$tier = '';
+			$lidb = '';
+			$notes = '';
+			
+			// Extract nested fields
+			if (isset($number['TN Details']) && is_array($number['TN Details'])) {
+				$tn_details = $number['TN Details'];
+				$activation_date = $tn_details['Activation Date'] ?? $tn_details['activation_date'] ?? '';
+				$rate_center = $tn_details['Rate Center'] ?? $tn_details['rate_center'] ?? '';
+				$tier = $tn_details['Tier'] ?? $tn_details['tier'] ?? '';
+			}
+			
+			// LIDB is at top level
+			$lidb = $number['Lidb'] ?? $number['lidb'] ?? '';
+			
+			// Notes (ReferenceID)
+			$notes = $number['ReferenceID'] ?? $number['referenceID'] ?? '';
 			
 			// Skip rows with no telephone number
 			if (empty($tn)) {
 				continue;
+			}
+			
+			// Format activation date if present
+			if (!empty($activation_date)) {
+				// Try to format the date nicely
+				$date_timestamp = strtotime($activation_date);
+				if ($date_timestamp !== false) {
+					$activation_date = date('Y-m-d H:i', $date_timestamp);
+				}
 			}
 
 			//create the row link
@@ -174,9 +203,12 @@
 				echo "		".escape($tn);
 			}
 			echo "	</td>\n";
-			echo "	<td>".escape($tg)."&nbsp;</td>\n";
-			echo "	<td>".escape($portout_pin)."&nbsp;</td>\n";
-			echo "	<td>".escape($cnam)."&nbsp;</td>\n";
+			echo "	<td>".escape($status)."&nbsp;</td>\n";
+			echo "	<td class='no-wrap'>".escape($activation_date)."&nbsp;</td>\n";
+			echo "	<td>".escape($rate_center)."&nbsp;</td>\n";
+			echo "	<td>".escape($tier)."&nbsp;</td>\n";
+			echo "	<td>".escape($lidb)."&nbsp;</td>\n";
+			echo "	<td>".escape($notes)."&nbsp;</td>\n";
 			if (permission_exists('bulkvs_edit')) {
 				echo "	<td class='action-button'>";
 				echo button::create(['type'=>'button','title'=>$text['button-edit'],'icon'=>$settings->get('theme', 'button_icon_edit'),'link'=>$list_row_url]);
