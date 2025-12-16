@@ -197,8 +197,8 @@
 	echo "<input type='hidden' name='tn' value='".escape($tn)."'>\n";
 	echo "<input type='hidden' name='".$token['name']."' value='".$token['hash']."'>\n";
 
-	echo "<div class='action_bar' id='action_bar'>\n";
-	echo "	<div class='heading'><b>".$text['title-bulkvs-e911-edit']."</b></div>\n";
+	echo "<div class='action_bar' id='action_bar' style='background-color: #d32f2f; color: #ffffff;'>\n";
+	echo "	<div class='heading' style='color: #ffffff;'><b>".$text['title-bulkvs-e911-edit']."</b></div>\n";
 	echo "	<div class='actions'>\n";
 	echo button::create(['type'=>'button','label'=>$text['button-back'],'icon'=>'arrow-left','link'=>'bulkvs_numbers.php']);
 	echo button::create(['type'=>'submit','label'=>$text['button-save'],'icon'=>$settings->get('theme', 'button_icon_save'),'id'=>'btn_save']);
