@@ -89,6 +89,87 @@
 		$paginated_numbers = array_slice($numbers, $offset, $rows_per_page);
 	}
 
+//build domain lookup map for paginated numbers
+	$domain_map = [];
+	if (!empty($paginated_numbers)) {
+		// Extract 10-digit numbers from BulkVS 11-digit numbers
+		$tn_10_digit = [];
+		foreach ($paginated_numbers as $number) {
+			$tn = $number['TN'] ?? $number['tn'] ?? $number['telephoneNumber'] ?? '';
+			if (!empty($tn)) {
+				// Convert 11-digit to 10-digit (remove leading "1")
+				$tn_10 = preg_replace('/^1/', '', $tn);
+				if (strlen($tn_10) == 10) {
+					$tn_10_digit[] = $tn_10;
+				}
+			}
+		}
+		
+		// Query destinations for these numbers
+		if (!empty($tn_10_digit)) {
+			$placeholders = [];
+			$parameters = [];
+			foreach ($tn_10_digit as $index => $tn_10) {
+				$placeholders[] = ':tn_' . $index;
+				$parameters['tn_' . $index] = $tn_10;
+			}
+			
+			$sql = "select distinct destination_number, domain_uuid ";
+			$sql .= "from v_destinations ";
+			$sql .= "where destination_number in (" . implode(', ', $placeholders) . ") ";
+			$sql .= "and destination_enabled = 'true' ";
+			$destinations = $database->select($sql, $parameters, 'all');
+			unset($sql, $parameters);
+			
+			// Build map of destination_number -> domain_uuid
+			$domain_uuids = [];
+			foreach ($destinations as $dest) {
+				$dest_number = $dest['destination_number'] ?? '';
+				$dest_domain_uuid = $dest['domain_uuid'] ?? '';
+				if (!empty($dest_number) && !empty($dest_domain_uuid)) {
+					// Store domain_uuid for this number (use first match if multiple)
+					if (!isset($domain_uuids[$dest_number])) {
+						$domain_uuids[$dest_number] = $dest_domain_uuid;
+					}
+				}
+			}
+			
+			// Query domain names for unique domain_uuids
+			if (!empty($domain_uuids)) {
+				$unique_domain_uuids = array_unique(array_values($domain_uuids));
+				$placeholders = [];
+				$parameters = [];
+				foreach ($unique_domain_uuids as $index => $domain_uuid) {
+					$placeholders[] = ':domain_uuid_' . $index;
+					$parameters['domain_uuid_' . $index] = $domain_uuid;
+				}
+				
+				$sql = "select domain_uuid, domain_name ";
+				$sql .= "from v_domains ";
+				$sql .= "where domain_uuid in (" . implode(', ', $placeholders) . ") ";
+				$domains = $database->select($sql, $parameters, 'all');
+				unset($sql, $parameters);
+				
+				// Build map of domain_uuid -> domain_name
+				$domain_names = [];
+				foreach ($domains as $domain) {
+					$domain_uuid = $domain['domain_uuid'] ?? '';
+					$domain_name = $domain['domain_name'] ?? '';
+					if (!empty($domain_uuid)) {
+						$domain_names[$domain_uuid] = $domain_name;
+					}
+				}
+				
+				// Build final map: destination_number -> domain_name
+				foreach ($domain_uuids as $dest_number => $domain_uuid) {
+					if (isset($domain_names[$domain_uuid])) {
+						$domain_map[$dest_number] = $domain_names[$domain_uuid];
+					}
+				}
+			}
+		}
+	}
+
 //create token
 	$object = new token;
 	$token = $object->create($_SERVER['PHP_SELF']);
@@ -145,6 +226,7 @@
 		echo "	<th>".$text['label-tier']."</th>\n";
 		echo "	<th>".$text['label-lidb']."</th>\n";
 		echo "	<th>".$text['label-notes']."</th>\n";
+		echo "	<th>".$text['label-domain']."</th>\n";
 		echo "</tr>\n";
 
 		foreach ($paginated_numbers as $number) {
@@ -184,6 +266,16 @@
 					$activation_date = date('Y-m-d H:i', $date_timestamp);
 				}
 			}
+			
+			// Look up domain for this number
+			$domain_name = '';
+			if (!empty($tn)) {
+				// Convert 11-digit to 10-digit (remove leading "1")
+				$tn_10 = preg_replace('/^1/', '', $tn);
+				if (strlen($tn_10) == 10 && isset($domain_map[$tn_10])) {
+					$domain_name = $domain_map[$tn_10];
+				}
+			}
 
 			//show the data
 			echo "<tr class='list-row'>\n";
@@ -194,6 +286,7 @@
 			echo "	<td>".escape($tier)."&nbsp;</td>\n";
 			echo "	<td>".escape($lidb)."&nbsp;</td>\n";
 			echo "	<td>".escape($notes)."&nbsp;</td>\n";
+			echo "	<td>".escape($domain_name)."&nbsp;</td>\n";
 			echo "</tr>\n";
 		}
 
@@ -230,8 +323,8 @@
 		echo "		var td = tr[i].getElementsByTagName('td');\n";
 		echo "		var found = false;\n";
 		echo "		\n";
-		echo "		// Check each cell in the row (skip last column if it's action button)\n";
-		echo "		for (var j = 0; j < td.length - 1; j++) {\n";
+		echo "		// Check each cell in the row\n";
+		echo "		for (var j = 0; j < td.length; j++) {\n";
 		echo "			if (td[j]) {\n";
 		echo "				var txtValue = td[j].textContent || td[j].innerText;\n";
 		echo "				if (txtValue.toLowerCase().indexOf(filter) > -1) {\n";
