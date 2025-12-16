@@ -137,21 +137,16 @@
 				
 				$destination_uuid = uuid();
 				$destination_number = preg_replace('/[^0-9]/', '', $purchase_tn); // Remove non-numeric characters
-				
-				// Get domain name for context
-				$sql = "select domain_name from v_domains where domain_uuid = :domain_uuid ";
-				$parameters['domain_uuid'] = $purchase_domain_uuid;
-				$domain_name = $database->select($sql, $parameters, 'column');
-				unset($sql, $parameters);
 
 				// Prepare destination array
 				$array['destinations'][0]['destination_uuid'] = $destination_uuid;
 				$array['destinations'][0]['domain_uuid'] = $purchase_domain_uuid;
 				$array['destinations'][0]['destination_type'] = 'inbound';
 				$array['destinations'][0]['destination_number'] = $destination_number;
-				$array['destinations'][0]['destination_context'] = $domain_name ?? 'public';
+				$array['destinations'][0]['destination_prefix'] = '1';
+				$array['destinations'][0]['destination_context'] = 'public';
 				$array['destinations'][0]['destination_enabled'] = 'true';
-				$array['destinations'][0]['destination_description'] = 'BulkVS: ' . $purchase_tn;
+				$array['destinations'][0]['destination_description'] = !empty($purchase_reference_id) ? $purchase_reference_id : '';
 
 				// Grant temporary permissions
 				$p = permissions::new();

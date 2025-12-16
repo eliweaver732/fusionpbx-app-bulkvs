@@ -93,7 +93,7 @@ $text['label-select']['en-gb'] = "Select";
 $text['message-update']['en-us'] = "Update Completed";
 $text['message-update']['en-gb'] = "Update Completed";
 
-$text['message-purchase-success']['en-us'] = "Number purchased successfully and destination created";
+$text['message-purchase-success']['en-us'] = "Number purchased successfully and destination created click Save to activate the number";
 $text['message-purchase-success']['en-gb'] = "Number purchased successfully and destination created";
 
 $text['message-api-error']['en-us'] = "API Error";
