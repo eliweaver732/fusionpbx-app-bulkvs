@@ -27,6 +27,7 @@
 //includes files
 	require_once dirname(__DIR__, 2) . "/resources/require.php";
 	require_once "resources/check_auth.php";
+	require_once dirname(__DIR__, 2) . "/resources/paging.php";
 
 //check permissions
 	if (!permission_exists('bulkvs_view')) {
@@ -58,9 +59,34 @@
 		} elseif (is_array($api_response)) {
 			$numbers = $api_response;
 		}
+		
+		// Filter out empty/invalid entries
+		$numbers = array_filter($numbers, function($number) {
+			$tn = $number['tn'] ?? $number['TN'] ?? $number['telephoneNumber'] ?? '';
+			return !empty($tn);
+		});
+		$numbers = array_values($numbers); // Re-index array
 	} catch (Exception $e) {
 		$error_message = $e->getMessage();
 		message::add($text['message-api-error'] . ': ' . $error_message, 'negative');
+	}
+
+//prepare to page the results
+	$num_rows = count($numbers);
+	$rows_per_page = $settings->get('domain', 'paging', 50);
+	$param = "";
+	if (!empty($_GET['page'])) {
+		$page = $_GET['page'];
+	}
+	if (!isset($page)) { $page = 0; $_GET['page'] = 0; }
+	[$paging_controls, $rows_per_page] = paging($num_rows, $param, $rows_per_page);
+	[$paging_controls_mini, $rows_per_page] = paging($num_rows, $param, $rows_per_page, true);
+	$offset = $rows_per_page * $page;
+	
+	// Slice the results array for pagination
+	$paginated_numbers = [];
+	if (!empty($numbers)) {
+		$paginated_numbers = array_slice($numbers, $offset, $rows_per_page);
 	}
 
 //create token
@@ -74,13 +100,16 @@
 //show the content
 	echo "<div class='action_bar' id='action_bar'>\n";
 	echo "	<div class='heading'><b>".$text['title-bulkvs-numbers']."</b>";
-	if (!empty($numbers)) {
-		echo "<div class='count'>".number_format(count($numbers))."</div>";
+	if ($num_rows > 0) {
+		echo "<div class='count'>".number_format($num_rows)."</div>";
 	}
 	echo "</div>\n";
 	echo "	<div class='actions'>\n";
 	if (permission_exists('bulkvs_search')) {
 		echo button::create(['type'=>'button','label'=>$text['title-bulkvs-search'],'icon'=>'search','link'=>'bulkvs_search.php']);
+	}
+	if ($paging_controls_mini != '') {
+		echo "<span style='margin-left: 15px;'>".$paging_controls_mini."</span>";
 	}
 	echo "	</div>\n";
 	echo "	<div style='clear: both;'></div>\n";
@@ -101,9 +130,23 @@
 		echo "<br />\n";
 	}
 
-	if (!empty($numbers)) {
+	if (!empty($paginated_numbers)) {
+		// Filter input for client-side search
 		echo "<div class='card'>\n";
-		echo "<table class='list'>\n";
+		echo "	<div class='content'>\n";
+		echo "		<table class='no_hover' style='width: 100%;'>\n";
+		echo "			<tr>\n";
+		echo "				<td style='width: 200px;'>Filter Results:</td>\n";
+		echo "				<td><input type='text' id='table_filter' class='formfld' placeholder='Type to filter...' style='width: 100%; max-width: 400px;' onkeyup='filterTable()'></td>\n";
+		echo "				<td><span id='filter_count' style='color: #666;'></span></td>\n";
+		echo "			</tr>\n";
+		echo "		</table>\n";
+		echo "	</div>\n";
+		echo "</div>\n";
+		echo "<br />\n";
+		
+		echo "<div class='card'>\n";
+		echo "<table class='list' id='numbers_table'>\n";
 		echo "<tr class='list-header'>\n";
 		echo "	<th>".$text['label-telephone-number']."</th>\n";
 		echo "	<th>".$text['label-trunk-group']."</th>\n";
@@ -114,11 +157,17 @@
 		}
 		echo "</tr>\n";
 
-		foreach ($numbers as $number) {
-			$tn = $number['tn'] ?? $number['telephoneNumber'] ?? '';
-			$tg = $number['trunkGroup'] ?? '';
-			$portout_pin = $number['portoutPin'] ?? '';
-			$cnam = $number['cnam'] ?? '';
+		foreach ($paginated_numbers as $number) {
+			// Try multiple possible field name variations from the API
+			$tn = $number['tn'] ?? $number['TN'] ?? $number['telephoneNumber'] ?? '';
+			$tg = $number['trunkGroup'] ?? $number['Trunk Group'] ?? '';
+			$portout_pin = $number['portoutPin'] ?? $number['Portout PIN'] ?? '';
+			$cnam = $number['cnam'] ?? $number['CNAM'] ?? '';
+			
+			// Skip rows with no telephone number
+			if (empty($tn)) {
+				continue;
+			}
 
 			//create the row link
 			$list_row_url = '';
@@ -148,6 +197,10 @@
 
 		echo "</table>\n";
 		echo "</div>\n";
+		echo "<br />\n";
+		if ($paging_controls != '') {
+			echo "<div align='center'>".$paging_controls."</div>\n";
+		}
 	} else {
 		if (empty($error_message)) {
 			echo "<div class='card'>\n";
@@ -157,6 +210,57 @@
 	}
 
 	echo "<br />\n";
+
+//add client-side table filtering script
+	if (!empty($paginated_numbers)) {
+		$total_on_page = count($paginated_numbers);
+		echo "<script>\n";
+		echo "var totalRows = ".$total_on_page.";\n";
+		echo "function filterTable() {\n";
+		echo "	var input = document.getElementById('table_filter');\n";
+		echo "	var filter = input.value.toLowerCase();\n";
+		echo "	var table = document.getElementById('numbers_table');\n";
+		echo "	var tr = table.getElementsByTagName('tr');\n";
+		echo "	var visibleCount = 0;\n";
+		echo "	\n";
+		echo "	// Start from index 1 to skip header row\n";
+		echo "	for (var i = 1; i < tr.length; i++) {\n";
+		echo "		var td = tr[i].getElementsByTagName('td');\n";
+		echo "		var found = false;\n";
+		echo "		\n";
+		echo "		// Check each cell in the row (skip last column if it's action button)\n";
+		echo "		for (var j = 0; j < td.length - 1; j++) {\n";
+		echo "			if (td[j]) {\n";
+		echo "				var txtValue = td[j].textContent || td[j].innerText;\n";
+		echo "				if (txtValue.toLowerCase().indexOf(filter) > -1) {\n";
+		echo "					found = true;\n";
+		echo "					break;\n";
+		echo "				}\n";
+		echo "			}\n";
+		echo "		}\n";
+		echo "		\n";
+		echo "		if (found) {\n";
+		echo "			tr[i].style.display = '';\n";
+		echo "			visibleCount++;\n";
+		echo "		} else {\n";
+		echo "			tr[i].style.display = 'none';\n";
+		echo "		}\n";
+		echo "	}\n";
+		echo "	\n";
+		echo "	// Update filter count\n";
+		echo "	var countElement = document.getElementById('filter_count');\n";
+		echo "	if (filter === '') {\n";
+		echo "		countElement.textContent = 'Showing all ' + totalRows + ' results';\n";
+		echo "	} else {\n";
+		echo "		countElement.textContent = 'Showing ' + visibleCount + ' of ' + totalRows;\n";
+		echo "	}\n";
+		echo "}\n";
+		echo "// Initialize count on page load\n";
+		echo "document.addEventListener('DOMContentLoaded', function() {\n";
+		echo "	filterTable();\n";
+		echo "});\n";
+		echo "</script>\n";
+	}
 
 //include the footer
 	require_once "resources/footer.php";
