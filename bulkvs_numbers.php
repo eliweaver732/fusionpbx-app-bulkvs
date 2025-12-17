@@ -376,7 +376,9 @@
 			echo "	<td>".escape($lidb)."&nbsp;</td>\n";
 			echo "	<td>".escape($notes)."&nbsp;</td>\n";
 			if (!empty($destination_edit_url)) {
-				echo "	<td style='max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;' title='".escape($domain_name)."'><a href='".$destination_edit_url."' onclick='event.stopPropagation();'>".escape($domain_name)."</a>&nbsp;</td>\n";
+				echo "	<td class='no-link' style='max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;' title='".escape($domain_name)."'>";
+				echo button::create(['type'=>'button','class'=>'link','label'=>escape($domain_name),'link'=>$destination_edit_url,'onclick'=>'event.stopPropagation();']);
+				echo "&nbsp;</td>\n";
 			} else {
 				echo "	<td style='max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;' title='".escape($domain_name)."'>".escape($domain_name)."&nbsp;</td>\n";
 			}
@@ -421,7 +423,9 @@
 			}
 			
 			if (!empty($e911_edit_url)) {
-				echo "	<td style='max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;' title='".escape($e911_full_info ?: $e911_info)."'><a href='".$e911_edit_url."' onclick='event.stopPropagation();'>".escape($e911_info)."</a>&nbsp;</td>\n";
+				echo "	<td class='no-link' style='max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;' title='".escape($e911_full_info ?: $e911_info)."'>";
+				echo button::create(['type'=>'button','class'=>'link','label'=>escape($e911_info),'link'=>$e911_edit_url,'onclick'=>'event.stopPropagation();']);
+				echo "&nbsp;</td>\n";
 			} else {
 				echo "	<td style='max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;' title='".escape($e911_full_info ?: $e911_info)."'>".escape($e911_info)."&nbsp;</td>\n";
 			}
