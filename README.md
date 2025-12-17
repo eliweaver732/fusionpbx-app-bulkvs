@@ -54,7 +54,7 @@ This app provides seamless integration between FusionPBX and BulkVS, allowing ad
 
 2. Clone the repository:
    ```bash
-   git clone git@github.com:eliweaver732/fusionpbx-app-bulkvs.git
+   git clone https://github.com/eliweaver732/fusionpbx-app-bulkvs.git
    ```
 
 3. Rename the directory:
