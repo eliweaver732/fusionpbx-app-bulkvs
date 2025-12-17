@@ -93,6 +93,15 @@ $text['label-sms-numbers']['en-gb'] = "SMS Numbers";
 $text['description-sms-numbers']['en-us'] = "Comma-separated list of SMS numbers";
 $text['description-sms-numbers']['en-gb'] = "Comma-separated list of SMS numbers";
 
+$text['label-disconnect']['en-us'] = "Disconnect";
+$text['label-disconnect']['en-gb'] = "Disconnect";
+
+$text['message-disconnect-confirm']['en-us'] = "Are you sure you want to disconnect this number?";
+$text['message-disconnect-confirm']['en-gb'] = "Are you sure you want to disconnect this number?";
+
+$text['message-disconnect-success']['en-us'] = "Number disconnected successfully";
+$text['message-disconnect-success']['en-gb'] = "Number disconnected successfully";
+
 $text['label-lata']['en-us'] = "LATA";
 $text['label-lata']['en-gb'] = "LATA";
 
@@ -116,6 +125,9 @@ $text['button-edit']['en-gb'] = "Edit";
 
 $text['button-cancel']['en-us'] = "Cancel";
 $text['button-cancel']['en-gb'] = "Cancel";
+
+$text['button-continue']['en-us'] = "Continue";
+$text['button-continue']['en-gb'] = "Continue";
 
 $text['button-reset']['en-us'] = "Reset";
 $text['button-reset']['en-gb'] = "Reset";

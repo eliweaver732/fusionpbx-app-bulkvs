@@ -112,6 +112,17 @@ class bulkvs_api {
 				$url .= '?' . $query_string;
 				curl_setopt($ch, CURLOPT_URL, $url);
 			}
+		} elseif ($method === 'DELETE') {
+			// For DELETE requests, append data as query parameters
+			if ($data !== null && is_array($data)) {
+				$query_string = http_build_query($data);
+				if ($query_string) {
+					$url .= '?' . $query_string;
+					curl_setopt($ch, CURLOPT_URL, $url);
+				}
+			}
+			curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'DELETE');
+			error_log("BulkVS API Request - Method: DELETE, URL: $url");
 		}
 
 		curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
@@ -339,6 +350,15 @@ class bulkvs_api {
 			$data['Sms'] = $sms;
 		}
 		return $this->request('POST', '/e911Record', $data);
+	}
+
+	/**
+	 * Delete a telephone number
+	 * @param string $tn Telephone number to delete
+	 * @return array Response data
+	 */
+	public function deleteNumber($tn) {
+		return $this->request('DELETE', '/tnRecord', ['Number' => $tn]);
 	}
 }
 

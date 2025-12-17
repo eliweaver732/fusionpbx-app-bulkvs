@@ -35,6 +35,41 @@
 		exit;
 	}
 
+//process disconnect action
+	$action = $_POST['action'] ?? $_GET['action'] ?? '';
+	$disconnect_tn = $_POST['disconnect_tn'] ?? $_GET['disconnect_tn'] ?? '';
+	
+	if ($action == 'disconnect' && !empty($disconnect_tn) && permission_exists('bulkvs_purchase')) {
+		// Validate token
+		$object = new token;
+		if (!$object->validate($_SERVER['PHP_SELF'])) {
+			message::add("Invalid token", 'negative');
+			header("Location: bulkvs_numbers.php");
+			return;
+		}
+		
+		try {
+			require_once "resources/classes/bulkvs_api.php";
+			$bulkvs_api = new bulkvs_api($settings);
+			$result = $bulkvs_api->deleteNumber($disconnect_tn);
+			
+			// Check if delete was successful
+			$status = $result['Status'] ?? $result['status'] ?? '';
+			if (strtoupper($status) === 'SUCCESS') {
+				message::add($text['message-disconnect-success'], 'positive');
+			} else {
+				$error_msg = $result['Description'] ?? $result['description'] ?? 'Disconnect failed';
+				throw new Exception($error_msg);
+			}
+		} catch (Exception $e) {
+			message::add($text['message-api-error'] . ': ' . $e->getMessage(), 'negative');
+		}
+		
+		// Reload the page
+		header("Location: bulkvs_numbers.php");
+		return;
+	}
+
 //add multi-lingual support
 	$language = new text;
 	$text = $language->get();
@@ -93,6 +128,10 @@
 		$error_message = $e->getMessage();
 		message::add($text['message-api-error'] . ': ' . $error_message, 'negative');
 	}
+
+//create token (needed for disconnect action and modals)
+	$object = new token;
+	$token = $object->create($_SERVER['PHP_SELF']);
 
 //get filter parameter
 	$filter = $_GET['filter'] ?? $_POST['filter'] ?? '';
@@ -362,8 +401,10 @@
 			
 			// Create destination edit URL
 			$destination_edit_url = '';
+			$has_domain_for_display = false;
 			if (!empty($destination_uuid) && permission_exists('destination_edit')) {
 				$destination_edit_url = "../destinations/destination_edit.php?id=".urlencode($destination_uuid);
+				$has_domain_for_display = true;
 			}
 
 			//show the data
@@ -375,12 +416,20 @@
 			echo "	<td>".escape($tier)."&nbsp;</td>\n";
 			echo "	<td>".escape($lidb)."&nbsp;</td>\n";
 			echo "	<td>".escape($notes)."&nbsp;</td>\n";
-			if (!empty($destination_edit_url)) {
+			if ($has_domain_for_display && !empty($domain_name)) {
 				echo "	<td class='no-link' style='max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;' title='".escape($domain_name)."'>";
 				echo button::create(['type'=>'button','class'=>'link','label'=>escape($domain_name),'link'=>$destination_edit_url,'onclick'=>'event.stopPropagation();']);
 				echo "&nbsp;</td>\n";
 			} else {
-				echo "	<td style='max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;' title='".escape($domain_name)."'>".escape($domain_name)."&nbsp;</td>\n";
+				// Show Disconnect button if no domain and user has purchase permission
+				if (permission_exists('bulkvs_purchase')) {
+					$disconnect_modal_id = 'modal-disconnect-' . preg_replace('/[^0-9]/', '', $tn);
+					echo "	<td class='no-link' style='max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'>";
+					echo button::create(['type'=>'button','class'=>'link','label'=>$text['label-disconnect'],'onclick'=>"event.stopPropagation(); modal_open('".$disconnect_modal_id."');"]);
+					echo "&nbsp;</td>\n";
+				} else {
+					echo "	<td style='max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'>&nbsp;</td>\n";
+				}
 			}
 			
 			// E911 information
@@ -438,6 +487,50 @@
 		echo "<br />\n";
 		if ($paging_controls != '') {
 			echo "<div align='center'>".$paging_controls."</div>\n";
+		}
+		
+		// Create disconnect modals for numbers without domains
+		if (permission_exists('bulkvs_purchase')) {
+			$disconnect_modals_created = [];
+			foreach ($paginated_numbers as $number) {
+				$tn = $number['TN'] ?? $number['tn'] ?? $number['telephoneNumber'] ?? '';
+				if (empty($tn)) {
+					continue;
+				}
+				
+				// Check if this number has a domain (same logic as in table row)
+				$tn_10 = preg_replace('/^1/', '', $tn);
+				$has_domain = false;
+				if (strlen($tn_10) == 10 && isset($domain_map[$tn_10])) {
+					$domain_info = $domain_map[$tn_10];
+					$destination_uuid = is_array($domain_info) ? ($domain_info['destination_uuid'] ?? '') : '';
+					if (!empty($destination_uuid) && permission_exists('destination_edit')) {
+						$has_domain = true;
+					}
+				}
+				
+				// Only create modal if no domain (and not already created)
+				if (!$has_domain) {
+					$disconnect_modal_id = 'modal-disconnect-' . preg_replace('/[^0-9]/', '', $tn);
+					if (!isset($disconnect_modals_created[$disconnect_modal_id])) {
+						$disconnect_modals_created[$disconnect_modal_id] = true;
+						$disconnect_tn_escaped = escape($tn);
+						echo modal::create([
+							'id'=>$disconnect_modal_id,
+							'type'=>'delete',
+							'message'=>$text['message-disconnect-confirm'] . ' (' . $disconnect_tn_escaped . ')',
+							'actions'=>button::create([
+								'type'=>'button',
+								'label'=>$text['button-continue'],
+								'icon'=>'check',
+								'style'=>'float: right; margin-left: 15px;',
+								'collapse'=>'never',
+								'onclick'=>"modal_close(); window.location.href='bulkvs_numbers.php?action=disconnect&disconnect_tn=".urlencode($tn)."&".$token['name']."=".$token['hash']."';"
+							])
+						]);
+					}
+				}
+			}
 		}
 	} else {
 		if (empty($error_message)) {
