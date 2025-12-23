@@ -19,7 +19,8 @@ This app provides seamless integration between FusionPBX and BulkVS, allowing ad
   - Display status, activation date, rate center, tier, LIDB, notes, domain, and E911 information
   - Click on a number row to edit number details
   - Click on domain to edit the destination
-  - Click on E911 record to edit E911 information
+  - Click on E911 record in the table to edit E911 information for that number
+  - Access E911 management page via the E911 button in the action bar
 - **Number Editing**: Update LIDB/CNAM, Portout PIN, SMS/MMS settings, and Notes for individual numbers
 - **Number Search**: Search for available numbers by NPA (3-digit area code) or NPANXX (6-digit area code + exchange)
 - **Number Purchase**: Purchase numbers directly from the interface with automatic destination creation
@@ -27,9 +28,10 @@ This app provides seamless integration between FusionPBX and BulkVS, allowing ad
   - Automatically creates destination with proper context and prefix
   - Redirects to destination edit page after purchase
 - **E911 Management**: View and manage E911 records
+  - Access E911 management from the Numbers page action bar or directly from the menu
   - View E911 information in the numbers table
-  - Edit existing E911 records
-  - Create new E911 records
+  - Edit existing E911 records from the table or E911 page
+  - Create new E911 records for any number
   - Address validation before saving
   - SMS number configuration for E911 records
 - **Server-Side Pagination**: Efficient pagination for large result sets
@@ -98,7 +100,8 @@ Assign these permissions to user groups as needed through **Advanced > Groups**.
 3. Use the filter box to search through numbers
 4. Click on a number row to edit its details
 5. Click on the domain to edit the destination
-6. Click on the E911 record to edit E911 information
+6. Click on the E911 record in the table to edit E911 information for a specific number
+7. Use the **E911** button in the action bar (top left) to view and manage all E911 records
 
 ### Editing a Number
 
@@ -139,9 +142,20 @@ Assign these permissions to user groups as needed through **Advanced > Groups**.
 
 ### Managing E911 Records
 
+You can access E911 management in two ways:
+
+**From the Numbers Page:**
 1. Navigate to **Apps > BulkVS > Numbers**
-2. Click on the E911 record (or "None" if no record exists) for a number
-3. Fill in the E911 information:
+2. Click the **E911** button in the action bar (top left) to view all E911 records, or
+3. Click on the E911 record (or "None" if no record exists) in the table for a specific number
+
+**From the E911 Page:**
+1. Navigate to **Apps > BulkVS > E911** (or click the E911 button from the Numbers page)
+2. View all E911 records or click on a record to edit it
+
+**Editing/Creating E911 Records:**
+1. From either the Numbers page or E911 page, click on an E911 record (or "None" to create new)
+2. Fill in the E911 information:
    - **Caller Name**: Name associated with the E911 record
    - **Street Number**: Street number
    - **Street Name**: Street name
