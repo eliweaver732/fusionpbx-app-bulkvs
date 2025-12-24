@@ -337,46 +337,52 @@ class bulkvs_cache {
 					$mms = isset($messaging['Mms']) ? (bool)$messaging['Mms'] : false;
 				}
 				
-				// Check if record exists
-				$sql_check = "SELECT cache_uuid FROM v_bulkvs_numbers_cache WHERE tn = :tn ";
+				// Prepare data for insert/update
+				$data_json = json_encode($number);
+				
+				// Check if record exists - use SELECT then INSERT/UPDATE instead of ON CONFLICT
+				// This works even if the unique constraint wasn't created properly
+				$check_sql = "SELECT cache_uuid FROM v_bulkvs_numbers_cache WHERE tn = :tn";
 				if (!empty($trunk_group)) {
-					$sql_check .= "AND trunk_group = :trunk_group ";
+					$check_sql .= " AND trunk_group = :trunk_group";
 				}
 				$check_params = ['tn' => $tn];
 				if (!empty($trunk_group)) {
 					$check_params['trunk_group'] = $trunk_group;
 				}
-				$existing = $this->database->select($sql_check, $check_params, 'row');
+				
+				$existing = $this->database->select($check_sql, $check_params, 'row');
 				
 				if (empty($existing)) {
 					$new_count++;
+					// INSERT new record
+					$sql = "INSERT INTO v_bulkvs_numbers_cache ";
+					$sql .= "(cache_uuid, tn, status, activation_date, rate_center, tier, lidb, reference_id, ";
+					$sql .= "sms, mms, portout_pin, trunk_group, data_json, last_updated, created) ";
+					$sql .= "VALUES ";
+					$sql .= "(gen_random_uuid(), :tn, :status, :activation_date, :rate_center, :tier, :lidb, :reference_id, ";
+					$sql .= ":sms, :mms, :portout_pin, :trunk_group, :data_json::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ";
 				} else {
 					$updated_count++;
+					// UPDATE existing record
+					$sql = "UPDATE v_bulkvs_numbers_cache SET ";
+					$sql .= "status = :status, ";
+					$sql .= "activation_date = :activation_date, ";
+					$sql .= "rate_center = :rate_center, ";
+					$sql .= "tier = :tier, ";
+					$sql .= "lidb = :lidb, ";
+					$sql .= "reference_id = :reference_id, ";
+					$sql .= "sms = :sms, ";
+					$sql .= "mms = :mms, ";
+					$sql .= "portout_pin = :portout_pin, ";
+					$sql .= "trunk_group = :trunk_group, ";
+					$sql .= "data_json = :data_json::jsonb, ";
+					$sql .= "last_updated = CURRENT_TIMESTAMP ";
+					$sql .= "WHERE tn = :tn";
+					if (!empty($trunk_group)) {
+						$sql .= " AND trunk_group = :trunk_group";
+					}
 				}
-				
-				// Prepare data for insert/update
-				$data_json = json_encode($number);
-				
-				// Simplified SQL - remove the complex COALESCE subquery that might be causing issues
-				$sql = "INSERT INTO v_bulkvs_numbers_cache ";
-				$sql .= "(cache_uuid, tn, status, activation_date, rate_center, tier, lidb, reference_id, ";
-				$sql .= "sms, mms, portout_pin, trunk_group, data_json, last_updated, created) ";
-				$sql .= "VALUES ";
-				$sql .= "(gen_random_uuid(), :tn, :status, :activation_date, :rate_center, :tier, :lidb, :reference_id, ";
-				$sql .= ":sms, :mms, :portout_pin, :trunk_group, :data_json::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ";
-				$sql .= "ON CONFLICT (tn) DO UPDATE SET ";
-				$sql .= "status = EXCLUDED.status, ";
-				$sql .= "activation_date = EXCLUDED.activation_date, ";
-				$sql .= "rate_center = EXCLUDED.rate_center, ";
-				$sql .= "tier = EXCLUDED.tier, ";
-				$sql .= "lidb = EXCLUDED.lidb, ";
-				$sql .= "reference_id = EXCLUDED.reference_id, ";
-				$sql .= "sms = EXCLUDED.sms, ";
-				$sql .= "mms = EXCLUDED.mms, ";
-				$sql .= "portout_pin = EXCLUDED.portout_pin, ";
-				$sql .= "trunk_group = EXCLUDED.trunk_group, ";
-				$sql .= "data_json = EXCLUDED.data_json, ";
-				$sql .= "last_updated = CURRENT_TIMESTAMP ";
 				
 				// Keep booleans as PHP booleans - PostgreSQL PDO should handle them
 				// But FusionPBX's database class might need them differently
@@ -800,24 +806,30 @@ class bulkvs_cache {
 				$data_json = json_encode($record);
 				$sms_json = json_encode($sms_array);
 				
-				$sql = "INSERT INTO v_bulkvs_e911_cache ";
-				$sql .= "(cache_uuid, tn, caller_name, address_line1, address_line2, city, state, zip, ";
-				$sql .= "address_id, sms, data_json, last_updated, created) ";
-				$sql .= "VALUES ";
-				$sql .= "(gen_random_uuid(), :tn, :caller_name, :address_line1, :address_line2, :city, :state, :zip, ";
-				$sql .= ":address_id, :sms::jsonb, :data_json::jsonb, CURRENT_TIMESTAMP, ";
-				$sql .= "COALESCE((SELECT created FROM v_bulkvs_e911_cache WHERE tn = :tn LIMIT 1), CURRENT_TIMESTAMP)) ";
-				$sql .= "ON CONFLICT (tn) DO UPDATE SET ";
-				$sql .= "caller_name = EXCLUDED.caller_name, ";
-				$sql .= "address_line1 = EXCLUDED.address_line1, ";
-				$sql .= "address_line2 = EXCLUDED.address_line2, ";
-				$sql .= "city = EXCLUDED.city, ";
-				$sql .= "state = EXCLUDED.state, ";
-				$sql .= "zip = EXCLUDED.zip, ";
-				$sql .= "address_id = EXCLUDED.address_id, ";
-				$sql .= "sms = EXCLUDED.sms, ";
-				$sql .= "data_json = EXCLUDED.data_json, ";
-				$sql .= "last_updated = CURRENT_TIMESTAMP ";
+				// Use SELECT then INSERT/UPDATE instead of ON CONFLICT
+				if (empty($existing)) {
+					// INSERT new record
+					$sql = "INSERT INTO v_bulkvs_e911_cache ";
+					$sql .= "(cache_uuid, tn, caller_name, address_line1, address_line2, city, state, zip, ";
+					$sql .= "address_id, sms, data_json, last_updated, created) ";
+					$sql .= "VALUES ";
+					$sql .= "(gen_random_uuid(), :tn, :caller_name, :address_line1, :address_line2, :city, :state, :zip, ";
+					$sql .= ":address_id, :sms::jsonb, :data_json::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ";
+				} else {
+					// UPDATE existing record
+					$sql = "UPDATE v_bulkvs_e911_cache SET ";
+					$sql .= "caller_name = :caller_name, ";
+					$sql .= "address_line1 = :address_line1, ";
+					$sql .= "address_line2 = :address_line2, ";
+					$sql .= "city = :city, ";
+					$sql .= "state = :state, ";
+					$sql .= "zip = :zip, ";
+					$sql .= "address_id = :address_id, ";
+					$sql .= "sms = :sms::jsonb, ";
+					$sql .= "data_json = :data_json::jsonb, ";
+					$sql .= "last_updated = CURRENT_TIMESTAMP ";
+					$sql .= "WHERE tn = :tn ";
+				}
 				
 				$parameters = [
 					'tn' => $tn,
