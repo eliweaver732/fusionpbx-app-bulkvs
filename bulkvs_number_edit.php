@@ -48,6 +48,100 @@
 	$notes = $_POST['notes'] ?? '';
 	$sms = isset($_POST['sms']) && $_POST['sms'] == '1' ? true : false;
 	$mms = isset($_POST['mms']) && $_POST['mms'] == '1' ? true : false;
+	$park_tn = $_POST['park_tn'] ?? $_GET['park_tn'] ?? '';
+	$action = $_POST['action'] ?? $_GET['action'] ?? '';
+
+//process park action
+	if ($action == 'park' && !empty($park_tn) && permission_exists('bulkvs_purchase')) {
+		// Validate token
+		$object = new token;
+		if (!$object->validate($_SERVER['PHP_SELF'])) {
+			message::add("Invalid token", 'negative');
+			header("Location: bulkvs_number_edit.php?tn=".urlencode($tn));
+			return;
+		}
+		
+		try {
+			// Get park domain from settings
+			$park_domain_name = $settings->get('bulkvs', 'park_domain', '');
+			if (empty($park_domain_name)) {
+				throw new Exception("Park Domain must be configured in default settings");
+			}
+			
+			// Look up domain UUID from domain name
+			if (!isset($database) || $database === null) {
+				$database = new database;
+			}
+			$sql = "select domain_uuid from v_domains where domain_name = :domain_name and domain_enabled = true limit 1";
+			$parameters['domain_name'] = $park_domain_name;
+			$park_domain_uuid = $database->select($sql, $parameters, 'column');
+			unset($sql, $parameters);
+			
+			if (empty($park_domain_uuid)) {
+				throw new Exception("Park Domain '$park_domain_name' not found or not enabled");
+			}
+			
+			// Check if destination already exists for this number
+			$destination_number = preg_replace('/[^0-9]/', '', $park_tn); // Remove non-numeric characters
+			$tn_10 = preg_replace('/^1/', '', $destination_number); // Convert to 10-digit
+			if (strlen($tn_10) == 10) {
+				$sql = "select destination_uuid from v_destinations where destination_number = :destination_number and destination_type = 'inbound' and destination_enabled = 'true' limit 1";
+				$parameters['destination_number'] = $tn_10;
+				$existing_destination_uuid = $database->select($sql, $parameters, 'column');
+				unset($sql, $parameters);
+				
+				if (!empty($existing_destination_uuid)) {
+					// Destination already exists, redirect to edit page
+					message::add($text['message-park-success']);
+					header("Location: ../destinations/destination_edit.php?id=".urlencode($existing_destination_uuid));
+					return;
+				}
+			}
+			
+			// Create destination in FusionPBX (similar to purchase flow)
+			require_once dirname(__DIR__, 2) . "/app/destinations/resources/classes/destinations.php";
+			$destination = new destinations(['database' => $database, 'domain_uuid' => $park_domain_uuid]);
+			
+			$destination_uuid = uuid();
+			
+			// Prepare destination array
+			$array['destinations'][0]['destination_uuid'] = $destination_uuid;
+			$array['destinations'][0]['domain_uuid'] = $park_domain_uuid;
+			$array['destinations'][0]['destination_type'] = 'inbound';
+			$array['destinations'][0]['destination_number'] = $tn_10;
+			$array['destinations'][0]['destination_prefix'] = '1';
+			$array['destinations'][0]['destination_context'] = 'public';
+			$array['destinations'][0]['destination_enabled'] = 'true';
+			$array['destinations'][0]['destination_description'] = 'Parked number';
+			
+			// Grant temporary permissions
+			$p = permissions::new();
+			$p->add('destination_add', 'temp');
+			$p->add('dialplan_add', 'temp');
+			$p->add('dialplan_detail_add', 'temp');
+			
+			// Save the destination
+			$database->app_name = 'destinations';
+			$database->app_uuid = '5ec89622-b19c-3559-64f0-afde802ab139';
+			$database->save($array);
+			
+			// Revoke temporary permissions
+			$p->delete('destination_add', 'temp');
+			$p->delete('dialplan_add', 'temp');
+			$p->delete('dialplan_detail_add', 'temp');
+			
+			message::add($text['message-park-success']);
+			// Redirect to destination edit page
+			header("Location: ../destinations/destination_edit.php?id=".urlencode($destination_uuid));
+			return;
+		} catch (Exception $e) {
+			message::add($text['message-api-error'] . ': ' . $e->getMessage(), 'negative');
+		}
+		
+		// Reload the page
+		header("Location: bulkvs_number_edit.php?tn=".urlencode($tn));
+		return;
+	}
 
 //process form submission
 	if (!empty($_POST['action']) && $_POST['action'] == 'save' && !empty($tn)) {
@@ -155,6 +249,9 @@
 	echo "	<div class='heading'><b>".$text['title-bulkvs-number-edit']."</b></div>\n";
 	echo "	<div class='actions'>\n";
 	echo button::create(['type'=>'button','label'=>$text['button-back'],'icon'=>'arrow-left','link'=>'bulkvs_numbers.php']);
+	if (!empty($tn) && permission_exists('bulkvs_purchase')) {
+		echo button::create(['type'=>'button','label'=>$text['label-park'],'icon'=>'park','onclick'=>"modal_open('modal-park');"]);
+	}
 	echo button::create(['type'=>'submit','label'=>$text['button-save'],'icon'=>$settings->get('theme', 'button_icon_save'),'id'=>'btn_save']);
 	echo "	</div>\n";
 	echo "	<div style='clear: both;'></div>\n";
@@ -234,6 +331,24 @@
 	echo "<br />\n";
 
 	echo "</form>\n";
+
+	// Park confirmation modal (only if user has purchase permission and TN is set)
+	if (!empty($tn) && permission_exists('bulkvs_purchase')) {
+		$park_tn_escaped = escape($tn);
+		echo modal::create([
+			'id'=>'modal-park',
+			'type'=>'confirm',
+			'message'=>$text['message-park-confirm'] . ' (' . $park_tn_escaped . ')?',
+			'actions'=>button::create([
+				'type'=>'button',
+				'label'=>$text['button-continue'],
+				'icon'=>'check',
+				'style'=>'float: right; margin-left: 15px;',
+				'collapse'=>'never',
+				'onclick'=>"modal_close(); window.location.href='bulkvs_number_edit.php?tn=".urlencode($tn)."&action=park&park_tn=".urlencode($tn)."&".$token['name']."=".$token['hash']."';"
+			])
+		]);
+	}
 
 //include the footer
 	require_once "resources/footer.php";

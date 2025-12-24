@@ -114,6 +114,9 @@ $text['message-disconnect-success']['en-gb'] = "Number disconnected successfully
 $text['message-park-success']['en-us'] = "Number parked successfully and destination created";
 $text['message-park-success']['en-gb'] = "Number parked successfully and destination created";
 
+$text['message-park-confirm']['en-us'] = "Are you sure you want to park this number";
+$text['message-park-confirm']['en-gb'] = "Are you sure you want to park this number";
+
 $text['message-unpark-success']['en-us'] = "Number unparked successfully and domain changed";
 $text['message-unpark-success']['en-gb'] = "Number unparked successfully and domain changed";
 
