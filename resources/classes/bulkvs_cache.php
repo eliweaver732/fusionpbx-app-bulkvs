@@ -325,7 +325,25 @@ class bulkvs_cache {
 				$tier = '';
 				if (isset($number['TN Details']) && is_array($number['TN Details'])) {
 					$tn_details = $number['TN Details'];
-					$activation_date = $tn_details['Activation Date'] ?? $tn_details['activation_date'] ?? '';
+					$activation_date_raw = $tn_details['Activation Date'] ?? $tn_details['activation_date'] ?? '';
+					
+					// Normalize activation_date - fix malformed dates like "2025-12-01 01 08:00" -> "2025-12-01 01:08:00"
+					if (!empty($activation_date_raw)) {
+						// Fix common malformed date patterns: "YYYY-MM-DD HH MM:SS" -> "YYYY-MM-DD HH:MM:SS"
+						$activation_date = preg_replace('/(\d{4}-\d{2}-\d{2})\s+(\d{1,2})\s+(\d{2}:\d{2})/', '$1 $2:$3', $activation_date_raw);
+						// Also handle "YYYY-MM-DD HH MM SS" -> "YYYY-MM-DD HH:MM:SS"
+						$activation_date = preg_replace('/(\d{4}-\d{2}-\d{2})\s+(\d{1,2})\s+(\d{2})\s+(\d{2})/', '$1 $2:$3:$4', $activation_date);
+						
+						// Validate the date format - if still invalid, set to null
+						try {
+							$date_obj = new DateTime($activation_date);
+							$activation_date = $date_obj->format('Y-m-d H:i:s');
+						} catch (Exception $date_e) {
+							error_log("BulkVS: Invalid activation_date format for TN $tn: '$activation_date_raw' -> '$activation_date' - " . $date_e->getMessage());
+							$activation_date = ''; // Set to empty string if invalid
+						}
+					}
+					
 					$rate_center = $tn_details['Rate Center'] ?? $tn_details['rate_center'] ?? '';
 					$tier = $tn_details['Tier'] ?? $tn_details['tier'] ?? '';
 				}
@@ -390,7 +408,7 @@ class bulkvs_cache {
 				$parameters = [
 					'tn' => $tn,
 					'status' => $status,
-					'activation_date' => !empty($activation_date) ? $activation_date : null,
+					'activation_date' => (!empty($activation_date) && $activation_date !== '') ? $activation_date : null,
 					'rate_center' => $rate_center,
 					'tier' => $tier,
 					'lidb' => $lidb,
