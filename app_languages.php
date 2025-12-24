@@ -102,6 +102,9 @@ $text['label-disconnect']['en-gb'] = "Disconnect";
 $text['label-park']['en-us'] = "Park";
 $text['label-park']['en-gb'] = "Park";
 
+$text['label-unpark']['en-us'] = "Unpark";
+$text['label-unpark']['en-gb'] = "Unpark";
+
 $text['message-disconnect-confirm']['en-us'] = "Are you sure you want to disconnect this number?";
 $text['message-disconnect-confirm']['en-gb'] = "Are you sure you want to disconnect this number?";
 
@@ -110,6 +113,9 @@ $text['message-disconnect-success']['en-gb'] = "Number disconnected successfully
 
 $text['message-park-success']['en-us'] = "Number parked successfully and destination created";
 $text['message-park-success']['en-gb'] = "Number parked successfully and destination created";
+
+$text['message-unpark-success']['en-us'] = "Number unparked successfully and domain changed";
+$text['message-unpark-success']['en-gb'] = "Number unparked successfully and domain changed";
 
 $text['message-e911-delete-confirm']['en-us'] = "Are you sure you want to delete this E911 record?";
 $text['message-e911-delete-confirm']['en-gb'] = "Are you sure you want to delete this E911 record?";
