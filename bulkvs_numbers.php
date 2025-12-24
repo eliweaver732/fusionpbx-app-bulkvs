@@ -464,115 +464,12 @@
 		$numbers = array_values($numbers); // Re-index array
 	}
 
-//sort the numbers array
-	if (!empty($numbers) && !empty($order_by)) {
-		usort($numbers, function($a, $b) use ($order_by, $order) {
-			$value_a = '';
-			$value_b = '';
-			
-			switch ($order_by) {
-				case 'tn':
-					$value_a = $a['TN'] ?? $a['tn'] ?? $a['telephoneNumber'] ?? '';
-					$value_b = $b['TN'] ?? $b['tn'] ?? $b['telephoneNumber'] ?? '';
-					break;
-				case 'status':
-					$value_a = $a['Status'] ?? $a['status'] ?? '';
-					$value_b = $b['Status'] ?? $b['status'] ?? '';
-					break;
-				case 'activation_date':
-					if (isset($a['TN Details']) && is_array($a['TN Details'])) {
-						$value_a = $a['TN Details']['Activation Date'] ?? $a['TN Details']['activation_date'] ?? '';
-					}
-					if (isset($b['TN Details']) && is_array($b['TN Details'])) {
-						$value_b = $b['TN Details']['Activation Date'] ?? $b['TN Details']['activation_date'] ?? '';
-					}
-					// Convert to timestamp for proper date sorting
-					if (!empty($value_a)) {
-						$ts_a = strtotime($value_a);
-						$value_a = $ts_a !== false ? $ts_a : 0;
-					} else {
-						$value_a = 0;
-					}
-					if (!empty($value_b)) {
-						$ts_b = strtotime($value_b);
-						$value_b = $ts_b !== false ? $ts_b : 0;
-					} else {
-						$value_b = 0;
-					}
-					break;
-				case 'rate_center':
-					if (isset($a['TN Details']) && is_array($a['TN Details'])) {
-						$value_a = $a['TN Details']['Rate Center'] ?? $a['TN Details']['rate_center'] ?? '';
-					}
-					if (isset($b['TN Details']) && is_array($b['TN Details'])) {
-						$value_b = $b['TN Details']['Rate Center'] ?? $b['TN Details']['rate_center'] ?? '';
-					}
-					break;
-				case 'tier':
-					if (isset($a['TN Details']) && is_array($a['TN Details'])) {
-						$value_a = $a['TN Details']['Tier'] ?? $a['TN Details']['tier'] ?? '';
-					}
-					if (isset($b['TN Details']) && is_array($b['TN Details'])) {
-						$value_b = $b['TN Details']['Tier'] ?? $b['TN Details']['tier'] ?? '';
-					}
-					break;
-				case 'lidb':
-					$value_a = $a['Lidb'] ?? $a['lidb'] ?? '';
-					$value_b = $b['Lidb'] ?? $b['lidb'] ?? '';
-					break;
-				default:
-					return 0;
-			}
-			
-			// Compare values
-			if (is_numeric($value_a) && is_numeric($value_b)) {
-				$result = $value_a <=> $value_b;
-			} else {
-				$result = strcasecmp(strval($value_a), strval($value_b));
-			}
-			
-			return $order == 'desc' ? -$result : $result;
-		});
-	}
-
-//prepare to page the results
-	$num_rows = count($numbers);
-	$rows_per_page = $settings->get('domain', 'paging', 50);
-	$param = "";
-	if (!empty($filter)) {
-		$param = "&filter=".urlencode($filter);
-	}
-	if (!empty($order_by)) {
-		$param .= "&order_by=".urlencode($order_by);
-	}
-	if (!empty($order)) {
-		$param .= "&order=".urlencode($order);
-	}
-	// Build param for th_order_by (only filter, order_by/order will be added by th_order_by)
-	$th_order_by_param = "";
-	if (!empty($filter)) {
-		$th_order_by_param = "&filter=".urlencode($filter);
-	}
-	if (!empty($_GET['page'])) {
-		$page = $_GET['page'];
-	}
-	if (!isset($page)) { $page = 0; $_GET['page'] = 0; }
-	[$paging_controls, $rows_per_page] = paging($num_rows, $param, $rows_per_page);
-	[$paging_controls_mini, $rows_per_page] = paging($num_rows, $param, $rows_per_page, true);
-	$offset = $rows_per_page * $page;
-	
-	// Slice the results array for pagination
-	$paginated_numbers = [];
+//build domain lookup map for all numbers (needed for sorting)
+	$domain_map_all = [];
 	if (!empty($numbers)) {
-		$paginated_numbers = array_slice($numbers, $offset, $rows_per_page);
-	}
-
-//build domain lookup map for paginated numbers
-	$domain_map = [];
-	if (!empty($paginated_numbers)) {
 		// Extract 10-digit numbers from BulkVS 11-digit numbers
 		$tn_10_digit = [];
-		foreach ($paginated_numbers as $number) {
+		foreach ($numbers as $number) {
 			$tn = $number['TN'] ?? $number['tn'] ?? $number['telephoneNumber'] ?? '';
 			if (!empty($tn)) {
 				// Convert 11-digit to 10-digit (remove leading "1")
@@ -636,10 +533,6 @@
 				$sql = "select domain_uuid, domain_name ";
 				$sql .= "from v_domains ";
 				$sql .= "where domain_uuid in (" . implode(', ', $placeholders) . ") ";
-				// Initialize database if not already set
-				if (!isset($database) || $database === null) {
-					$database = new database;
-				}
 				$domains = $database->select($sql, $parameters, 'all');
 				unset($sql, $parameters);
 				
@@ -656,11 +549,148 @@
 				// Build final map: destination_number -> ['domain_name' => ..., 'destination_uuid' => ...]
 				foreach ($domain_uuids as $dest_number => $domain_uuid) {
 					if (isset($domain_names[$domain_uuid])) {
-						$domain_map[$dest_number] = [
+						$domain_map_all[$dest_number] = [
 							'domain_name' => $domain_names[$domain_uuid],
 							'destination_uuid' => $destination_uuids[$dest_number] ?? ''
 						];
 					}
+				}
+			}
+		}
+	}
+	
+	// Attach domain_name to each number record for sorting
+	foreach ($numbers as &$number) {
+		$tn = $number['TN'] ?? $number['tn'] ?? $number['telephoneNumber'] ?? '';
+		if (!empty($tn)) {
+			$tn_10 = preg_replace('/^1/', '', $tn);
+			if (strlen($tn_10) == 10 && isset($domain_map_all[$tn_10])) {
+				$number['_domain_name'] = $domain_map_all[$tn_10]['domain_name'] ?? '';
+			} else {
+				$number['_domain_name'] = '';
+			}
+		} else {
+			$number['_domain_name'] = '';
+		}
+	}
+	unset($number); // Break reference
+
+//sort the numbers array
+	if (!empty($numbers) && !empty($order_by)) {
+		usort($numbers, function($a, $b) use ($order_by, $order) {
+			$value_a = '';
+			$value_b = '';
+			
+			switch ($order_by) {
+				case 'tn':
+					$value_a = $a['TN'] ?? $a['tn'] ?? $a['telephoneNumber'] ?? '';
+					$value_b = $b['TN'] ?? $b['tn'] ?? $b['telephoneNumber'] ?? '';
+					break;
+				case 'status':
+					$value_a = $a['Status'] ?? $a['status'] ?? '';
+					$value_b = $b['Status'] ?? $b['status'] ?? '';
+					break;
+				case 'activation_date':
+					if (isset($a['TN Details']) && is_array($a['TN Details'])) {
+						$value_a = $a['TN Details']['Activation Date'] ?? $a['TN Details']['activation_date'] ?? '';
+					}
+					if (isset($b['TN Details']) && is_array($b['TN Details'])) {
+						$value_b = $b['TN Details']['Activation Date'] ?? $b['TN Details']['activation_date'] ?? '';
+					}
+					// Convert to timestamp for proper date sorting
+					if (!empty($value_a)) {
+						$ts_a = strtotime($value_a);
+						$value_a = $ts_a !== false ? $ts_a : 0;
+					} else {
+						$value_a = 0;
+					}
+					if (!empty($value_b)) {
+						$ts_b = strtotime($value_b);
+						$value_b = $ts_b !== false ? $ts_b : 0;
+					} else {
+						$value_b = 0;
+					}
+					break;
+				case 'rate_center':
+					if (isset($a['TN Details']) && is_array($a['TN Details'])) {
+						$value_a = $a['TN Details']['Rate Center'] ?? $a['TN Details']['rate_center'] ?? '';
+					}
+					if (isset($b['TN Details']) && is_array($b['TN Details'])) {
+						$value_b = $b['TN Details']['Rate Center'] ?? $b['TN Details']['rate_center'] ?? '';
+					}
+					break;
+				case 'tier':
+					if (isset($a['TN Details']) && is_array($a['TN Details'])) {
+						$value_a = $a['TN Details']['Tier'] ?? $a['TN Details']['tier'] ?? '';
+					}
+					if (isset($b['TN Details']) && is_array($b['TN Details'])) {
+						$value_b = $b['TN Details']['Tier'] ?? $b['TN Details']['tier'] ?? '';
+					}
+					break;
+				case 'lidb':
+					$value_a = $a['Lidb'] ?? $a['lidb'] ?? '';
+					$value_b = $b['Lidb'] ?? $b['lidb'] ?? '';
+					break;
+				case 'domain':
+					$value_a = $a['_domain_name'] ?? '';
+					$value_b = $b['_domain_name'] ?? '';
+					break;
+				default:
+					return 0;
+			}
+			
+			// Compare values
+			if (is_numeric($value_a) && is_numeric($value_b)) {
+				$result = $value_a <=> $value_b;
+			} else {
+				$result = strcasecmp(strval($value_a), strval($value_b));
+			}
+			
+			return $order == 'desc' ? -$result : $result;
+		});
+	}
+
+//prepare to page the results
+	$num_rows = count($numbers);
+	$rows_per_page = $settings->get('domain', 'paging', 50);
+	$param = "";
+	if (!empty($filter)) {
+		$param = "&filter=".urlencode($filter);
+	}
+	if (!empty($order_by)) {
+		$param .= "&order_by=".urlencode($order_by);
+	}
+	if (!empty($order)) {
+		$param .= "&order=".urlencode($order);
+	}
+	// Build param for th_order_by (only filter, order_by/order will be added by th_order_by)
+	$th_order_by_param = "";
+	if (!empty($filter)) {
+		$th_order_by_param = "&filter=".urlencode($filter);
+	}
+	if (!empty($_GET['page'])) {
+		$page = $_GET['page'];
+	}
+	if (!isset($page)) { $page = 0; $_GET['page'] = 0; }
+	[$paging_controls, $rows_per_page] = paging($num_rows, $param, $rows_per_page);
+	[$paging_controls_mini, $rows_per_page] = paging($num_rows, $param, $rows_per_page, true);
+	$offset = $rows_per_page * $page;
+	
+	// Slice the results array for pagination
+	$paginated_numbers = [];
+	if (!empty($numbers)) {
+		$paginated_numbers = array_slice($numbers, $offset, $rows_per_page);
+	}
+
+//build domain lookup map for paginated numbers (use already-built domain_map_all)
+	$domain_map = [];
+	if (!empty($paginated_numbers)) {
+		foreach ($paginated_numbers as $number) {
+			$tn = $number['TN'] ?? $number['tn'] ?? $number['telephoneNumber'] ?? '';
+			if (!empty($tn)) {
+				$tn_10 = preg_replace('/^1/', '', $tn);
+				if (strlen($tn_10) == 10 && isset($domain_map_all[$tn_10])) {
+					$domain_map[$tn_10] = $domain_map_all[$tn_10];
 				}
 			}
 		}
@@ -734,7 +764,7 @@
 		echo "	".th_order_by('tier', $text['label-tier'], $order_by, $order, '', '', $th_order_by_param)."\n";
 		echo "	".th_order_by('lidb', $text['label-lidb'], $order_by, $order, '', '', $th_order_by_param)."\n";
 		echo "	<th>".$text['label-notes']."</th>\n";
-		echo "	<th>".$text['label-domain']."</th>\n";
+		echo "	".th_order_by('domain', $text['label-domain'], $order_by, $order, '', '', $th_order_by_param)."\n";
 		echo "	<th>".$text['label-e911']."</th>\n";
 		echo "</tr>\n";
 

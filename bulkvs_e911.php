@@ -176,99 +176,12 @@
 		$e911_records = array_values($e911_records); // Re-index array
 	}
 
-//sort the E911 records array
-	if (!empty($e911_records) && !empty($order_by)) {
-		usort($e911_records, function($a, $b) use ($order_by, $order) {
-			$value_a = '';
-			$value_b = '';
-			
-			switch ($order_by) {
-				case 'tn':
-					$value_a = $a['TN'] ?? $a['tn'] ?? '';
-					$value_b = $b['TN'] ?? $b['tn'] ?? '';
-					break;
-				case 'caller_name':
-					$value_a = $a['Caller Name'] ?? $a['callerName'] ?? '';
-					$value_b = $b['Caller Name'] ?? $b['callerName'] ?? '';
-					break;
-				case 'address':
-					// Build address string for comparison
-					$addr_a_parts = [];
-					$addr_b_parts = [];
-					if (!empty($a['Address Line 1'] ?? $a['addressLine1'] ?? '')) {
-						$addr_a_parts[] = $a['Address Line 1'] ?? $a['addressLine1'] ?? '';
-					}
-					if (!empty($a['City'] ?? $a['city'] ?? '')) {
-						$addr_a_parts[] = $a['City'] ?? $a['city'] ?? '';
-					}
-					if (!empty($a['State'] ?? $a['state'] ?? '')) {
-						$addr_a_parts[] = $a['State'] ?? $a['state'] ?? '';
-					}
-					if (!empty($b['Address Line 1'] ?? $b['addressLine1'] ?? '')) {
-						$addr_b_parts[] = $b['Address Line 1'] ?? $b['addressLine1'] ?? '';
-					}
-					if (!empty($b['City'] ?? $b['city'] ?? '')) {
-						$addr_b_parts[] = $b['City'] ?? $b['city'] ?? '';
-					}
-					if (!empty($b['State'] ?? $b['state'] ?? '')) {
-						$addr_b_parts[] = $b['State'] ?? $b['state'] ?? '';
-					}
-					$value_a = implode(', ', $addr_a_parts);
-					$value_b = implode(', ', $addr_b_parts);
-					break;
-				default:
-					return 0;
-			}
-			
-			// Compare values
-			if (is_numeric($value_a) && is_numeric($value_b)) {
-				$result = $value_a <=> $value_b;
-			} else {
-				$result = strcasecmp(strval($value_a), strval($value_b));
-			}
-			
-			return $order == 'desc' ? -$result : $result;
-		});
-	}
-
-//prepare to page the results
-	$num_rows = count($e911_records);
-	$rows_per_page = $settings->get('domain', 'paging', 50);
-	$param = "";
-	if (!empty($filter)) {
-		$param = "&filter=".urlencode($filter);
-	}
-	if (!empty($order_by)) {
-		$param .= "&order_by=".urlencode($order_by);
-	}
-	if (!empty($order)) {
-		$param .= "&order=".urlencode($order);
-	}
-	// Build param for th_order_by (only filter, order_by/order will be added by th_order_by)
-	$th_order_by_param = "";
-	if (!empty($filter)) {
-		$th_order_by_param = "&filter=".urlencode($filter);
-	}
-	if (!empty($_GET['page'])) {
-		$page = $_GET['page'];
-	}
-	if (!isset($page)) { $page = 0; $_GET['page'] = 0; }
-	[$paging_controls, $rows_per_page] = paging($num_rows, $param, $rows_per_page);
-	[$paging_controls_mini, $rows_per_page] = paging($num_rows, $param, $rows_per_page, true);
-	$offset = $rows_per_page * $page;
-	
-	// Slice the results array for pagination
-	$paginated_e911_records = [];
+//build domain lookup map for all E911 records (needed for sorting)
+	$domain_map_all = [];
 	if (!empty($e911_records)) {
-		$paginated_e911_records = array_slice($e911_records, $offset, $rows_per_page);
-	}
-
-//build domain lookup map for paginated records
-	$domain_map = [];
-	if (!empty($paginated_e911_records)) {
 		// Extract 10-digit numbers from BulkVS 11-digit numbers
 		$tn_10_digit = [];
-		foreach ($paginated_e911_records as $record) {
+		foreach ($e911_records as $record) {
 			$tn = $record['TN'] ?? $record['tn'] ?? '';
 			if (!empty($tn)) {
 				// Convert 11-digit to 10-digit (remove leading "1")
@@ -332,10 +245,6 @@
 				$sql = "select domain_uuid, domain_name ";
 				$sql .= "from v_domains ";
 				$sql .= "where domain_uuid in (" . implode(', ', $placeholders) . ") ";
-				// Initialize database if not already set
-				if (!isset($database) || $database === null) {
-					$database = new database;
-				}
 				$domains = $database->select($sql, $parameters, 'all');
 				unset($sql, $parameters);
 				
@@ -352,11 +261,132 @@
 				// Build final map: destination_number -> ['domain_name' => ..., 'destination_uuid' => ...]
 				foreach ($domain_uuids as $dest_number => $domain_uuid) {
 					if (isset($domain_names[$domain_uuid])) {
-						$domain_map[$dest_number] = [
+						$domain_map_all[$dest_number] = [
 							'domain_name' => $domain_names[$domain_uuid],
 							'destination_uuid' => $destination_uuids[$dest_number] ?? ''
 						];
 					}
+				}
+			}
+		}
+	}
+	
+	// Attach domain_name to each E911 record for sorting
+	foreach ($e911_records as &$record) {
+		$tn = $record['TN'] ?? $record['tn'] ?? '';
+		if (!empty($tn)) {
+			$tn_10 = preg_replace('/^1/', '', $tn);
+			if (strlen($tn_10) == 10 && isset($domain_map_all[$tn_10])) {
+				$record['_domain_name'] = $domain_map_all[$tn_10]['domain_name'] ?? '';
+			} else {
+				$record['_domain_name'] = '';
+			}
+		} else {
+			$record['_domain_name'] = '';
+		}
+	}
+	unset($record); // Break reference
+
+//sort the E911 records array
+	if (!empty($e911_records) && !empty($order_by)) {
+		usort($e911_records, function($a, $b) use ($order_by, $order) {
+			$value_a = '';
+			$value_b = '';
+			
+			switch ($order_by) {
+				case 'tn':
+					$value_a = $a['TN'] ?? $a['tn'] ?? '';
+					$value_b = $b['TN'] ?? $b['tn'] ?? '';
+					break;
+				case 'caller_name':
+					$value_a = $a['Caller Name'] ?? $a['callerName'] ?? '';
+					$value_b = $b['Caller Name'] ?? $b['callerName'] ?? '';
+					break;
+				case 'address':
+					// Build address string for comparison
+					$addr_a_parts = [];
+					$addr_b_parts = [];
+					if (!empty($a['Address Line 1'] ?? $a['addressLine1'] ?? '')) {
+						$addr_a_parts[] = $a['Address Line 1'] ?? $a['addressLine1'] ?? '';
+					}
+					if (!empty($a['City'] ?? $a['city'] ?? '')) {
+						$addr_a_parts[] = $a['City'] ?? $a['city'] ?? '';
+					}
+					if (!empty($a['State'] ?? $a['state'] ?? '')) {
+						$addr_a_parts[] = $a['State'] ?? $a['state'] ?? '';
+					}
+					if (!empty($b['Address Line 1'] ?? $b['addressLine1'] ?? '')) {
+						$addr_b_parts[] = $b['Address Line 1'] ?? $b['addressLine1'] ?? '';
+					}
+					if (!empty($b['City'] ?? $b['city'] ?? '')) {
+						$addr_b_parts[] = $b['City'] ?? $b['city'] ?? '';
+					}
+					if (!empty($b['State'] ?? $b['state'] ?? '')) {
+						$addr_b_parts[] = $b['State'] ?? $b['state'] ?? '';
+					}
+					$value_a = implode(', ', $addr_a_parts);
+					$value_b = implode(', ', $addr_b_parts);
+					break;
+				case 'domain':
+					$value_a = $a['_domain_name'] ?? '';
+					$value_b = $b['_domain_name'] ?? '';
+					break;
+				default:
+					return 0;
+			}
+			
+			// Compare values
+			if (is_numeric($value_a) && is_numeric($value_b)) {
+				$result = $value_a <=> $value_b;
+			} else {
+				$result = strcasecmp(strval($value_a), strval($value_b));
+			}
+			
+			return $order == 'desc' ? -$result : $result;
+		});
+	}
+
+//prepare to page the results
+	$num_rows = count($e911_records);
+	$rows_per_page = $settings->get('domain', 'paging', 50);
+	$param = "";
+	if (!empty($filter)) {
+		$param = "&filter=".urlencode($filter);
+	}
+	if (!empty($order_by)) {
+		$param .= "&order_by=".urlencode($order_by);
+	}
+	if (!empty($order)) {
+		$param .= "&order=".urlencode($order);
+	}
+	// Build param for th_order_by (only filter, order_by/order will be added by th_order_by)
+	$th_order_by_param = "";
+	if (!empty($filter)) {
+		$th_order_by_param = "&filter=".urlencode($filter);
+	}
+	if (!empty($_GET['page'])) {
+		$page = $_GET['page'];
+	}
+	if (!isset($page)) { $page = 0; $_GET['page'] = 0; }
+	[$paging_controls, $rows_per_page] = paging($num_rows, $param, $rows_per_page);
+	[$paging_controls_mini, $rows_per_page] = paging($num_rows, $param, $rows_per_page, true);
+	$offset = $rows_per_page * $page;
+	
+	// Slice the results array for pagination
+	$paginated_e911_records = [];
+	if (!empty($e911_records)) {
+		$paginated_e911_records = array_slice($e911_records, $offset, $rows_per_page);
+	}
+
+//build domain lookup map for paginated records (use already-built domain_map_all)
+	$domain_map = [];
+	if (!empty($paginated_e911_records)) {
+		foreach ($paginated_e911_records as $record) {
+			$tn = $record['TN'] ?? $record['tn'] ?? '';
+			if (!empty($tn)) {
+				$tn_10 = preg_replace('/^1/', '', $tn);
+				if (strlen($tn_10) == 10 && isset($domain_map_all[$tn_10])) {
+					$domain_map[$tn_10] = $domain_map_all[$tn_10];
 				}
 			}
 		}
@@ -415,7 +445,7 @@
 		echo "	".th_order_by('tn', $text['label-telephone-number'], $order_by, $order, '', '', $th_order_by_param)."\n";
 		echo "	".th_order_by('caller_name', $text['label-caller-name'], $order_by, $order, '', '', $th_order_by_param)."\n";
 		echo "	".th_order_by('address', 'Address', $order_by, $order, '', '', $th_order_by_param)."\n";
-		echo "	<th>".$text['label-domain']."</th>\n";
+		echo "	".th_order_by('domain', $text['label-domain'], $order_by, $order, '', '', $th_order_by_param)."\n";
 		echo "</tr>\n";
 
 		foreach ($paginated_e911_records as $record) {
