@@ -72,6 +72,14 @@
 		$apps[$x]['default_settings'][$y]['default_setting_value'] = "";
 		$apps[$x]['default_settings'][$y]['default_setting_enabled'] = "true";
 		$apps[$x]['default_settings'][$y]['default_setting_description'] = "BulkVS HTTP Secret (for LRN & CNAM lookup)";
+		$y++;
+		$apps[$x]['default_settings'][$y]['default_setting_uuid'] = "b9e4d3c2-5f6c-7d8e-9f0a-1b2c3d4e5f6a";
+		$apps[$x]['default_settings'][$y]['default_setting_category'] = "bulkvs";
+		$apps[$x]['default_settings'][$y]['default_setting_subcategory'] = "park_domain";
+		$apps[$x]['default_settings'][$y]['default_setting_name'] = "text";
+		$apps[$x]['default_settings'][$y]['default_setting_value'] = "";
+		$apps[$x]['default_settings'][$y]['default_setting_enabled'] = "true";
+		$apps[$x]['default_settings'][$y]['default_setting_description'] = "Park Domain - Domain name to use when parking numbers without a domain";
 
 	//permission details
 		$y=0;

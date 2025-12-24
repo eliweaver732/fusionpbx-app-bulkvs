@@ -99,11 +99,17 @@ $text['description-sms-numbers']['en-gb'] = "Comma-separated list of SMS numbers
 $text['label-disconnect']['en-us'] = "Disconnect";
 $text['label-disconnect']['en-gb'] = "Disconnect";
 
+$text['label-park']['en-us'] = "Park";
+$text['label-park']['en-gb'] = "Park";
+
 $text['message-disconnect-confirm']['en-us'] = "Are you sure you want to disconnect this number?";
 $text['message-disconnect-confirm']['en-gb'] = "Are you sure you want to disconnect this number?";
 
 $text['message-disconnect-success']['en-us'] = "Number disconnected successfully";
 $text['message-disconnect-success']['en-gb'] = "Number disconnected successfully";
+
+$text['message-park-success']['en-us'] = "Number parked successfully and destination created";
+$text['message-park-success']['en-gb'] = "Number parked successfully and destination created";
 
 $text['message-e911-delete-confirm']['en-us'] = "Are you sure you want to delete this E911 record?";
 $text['message-e911-delete-confirm']['en-gb'] = "Are you sure you want to delete this E911 record?";

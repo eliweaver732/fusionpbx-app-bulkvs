@@ -35,9 +35,108 @@
 		exit;
 	}
 
-//process disconnect action
+//add multi-lingual support
+	$language = new text;
+	$text = $language->get();
+
+//initialize the settings object
+	$settings = new settings(['database' => $database, 'domain_uuid' => $domain_uuid]);
+
+//process disconnect and park actions
 	$action = $_POST['action'] ?? $_GET['action'] ?? '';
 	$disconnect_tn = $_POST['disconnect_tn'] ?? $_GET['disconnect_tn'] ?? '';
+	$park_tn = $_POST['park_tn'] ?? $_GET['park_tn'] ?? '';
+	
+	if ($action == 'park' && !empty($park_tn) && permission_exists('bulkvs_purchase')) {
+		// Validate token
+		$object = new token;
+		if (!$object->validate($_SERVER['PHP_SELF'])) {
+			message::add("Invalid token", 'negative');
+			header("Location: bulkvs_numbers.php");
+			return;
+		}
+		
+		try {
+			// Get park domain from settings
+			$park_domain_name = $settings->get('bulkvs', 'park_domain', '');
+			if (empty($park_domain_name)) {
+				throw new Exception("Park Domain must be configured in default settings");
+			}
+			
+			// Look up domain UUID from domain name
+			if (!isset($database) || $database === null) {
+				$database = new database;
+			}
+			$sql = "select domain_uuid from v_domains where domain_name = :domain_name and domain_enabled = true limit 1";
+			$parameters['domain_name'] = $park_domain_name;
+			$park_domain_uuid = $database->select($sql, $parameters, 'column');
+			unset($sql, $parameters);
+			
+			if (empty($park_domain_uuid)) {
+				throw new Exception("Park Domain '$park_domain_name' not found or not enabled");
+			}
+			
+			// Check if destination already exists for this number
+			$destination_number = preg_replace('/[^0-9]/', '', $park_tn); // Remove non-numeric characters
+			$tn_10 = preg_replace('/^1/', '', $destination_number); // Convert to 10-digit
+			if (strlen($tn_10) == 10) {
+				$sql = "select destination_uuid from v_destinations where destination_number = :destination_number and destination_type = 'inbound' and destination_enabled = 'true' limit 1";
+				$parameters['destination_number'] = $tn_10;
+				$existing_destination_uuid = $database->select($sql, $parameters, 'column');
+				unset($sql, $parameters);
+				
+				if (!empty($existing_destination_uuid)) {
+					// Destination already exists, redirect to edit page
+					message::add($text['message-park-success']);
+					header("Location: ../destinations/destination_edit.php?id=".urlencode($existing_destination_uuid));
+					return;
+				}
+			}
+			
+			// Create destination in FusionPBX (similar to purchase flow)
+			require_once dirname(__DIR__, 2) . "/app/destinations/resources/classes/destinations.php";
+			$destination = new destinations(['database' => $database, 'domain_uuid' => $park_domain_uuid]);
+			
+			$destination_uuid = uuid();
+			
+			// Prepare destination array
+			$array['destinations'][0]['destination_uuid'] = $destination_uuid;
+			$array['destinations'][0]['domain_uuid'] = $park_domain_uuid;
+			$array['destinations'][0]['destination_type'] = 'inbound';
+			$array['destinations'][0]['destination_number'] = $tn_10;
+			$array['destinations'][0]['destination_prefix'] = '1';
+			$array['destinations'][0]['destination_context'] = 'public';
+			$array['destinations'][0]['destination_enabled'] = 'true';
+			$array['destinations'][0]['destination_description'] = 'Parked number';
+			
+			// Grant temporary permissions
+			$p = permissions::new();
+			$p->add('destination_add', 'temp');
+			$p->add('dialplan_add', 'temp');
+			$p->add('dialplan_detail_add', 'temp');
+			
+			// Save the destination
+			$database->app_name = 'destinations';
+			$database->app_uuid = '5ec89622-b19c-3559-64f0-afde802ab139';
+			$database->save($array);
+			
+			// Revoke temporary permissions
+			$p->delete('destination_add', 'temp');
+			$p->delete('dialplan_add', 'temp');
+			$p->delete('dialplan_detail_add', 'temp');
+			
+			message::add($text['message-park-success']);
+			// Redirect to destination edit page
+			header("Location: ../destinations/destination_edit.php?id=".urlencode($destination_uuid));
+			return;
+		} catch (Exception $e) {
+			message::add($text['message-api-error'] . ': ' . $e->getMessage(), 'negative');
+		}
+		
+		// Reload the page
+		header("Location: bulkvs_numbers.php");
+		return;
+	}
 	
 	if ($action == 'disconnect' && !empty($disconnect_tn) && permission_exists('bulkvs_purchase')) {
 		// Validate token
@@ -79,13 +178,6 @@
 		header("Location: bulkvs_numbers.php");
 		return;
 	}
-
-//add multi-lingual support
-	$language = new text;
-	$text = $language->get();
-
-//initialize the settings object
-	$settings = new settings(['database' => $database, 'domain_uuid' => $domain_uuid]);
 
 //get trunk group from settings
 	$trunk_group = $settings->get('bulkvs', 'trunk_group', '');
@@ -580,11 +672,14 @@
 				echo button::create(['type'=>'button','class'=>'link','label'=>escape($domain_name),'link'=>$destination_edit_url,'onclick'=>'event.stopPropagation();']);
 				echo "&nbsp;</td>\n";
 			} else {
-				// Show Disconnect button if no domain and user has purchase permission
+				// Show Disconnect | Park buttons if no domain and user has purchase permission
 				if (permission_exists('bulkvs_purchase')) {
 					$disconnect_modal_id = 'modal-disconnect-' . preg_replace('/[^0-9]/', '', $tn);
+					$park_url = "bulkvs_numbers.php?action=park&park_tn=".urlencode($tn)."&".$token['name']."=".$token['hash'];
 					echo "	<td class='no-link' style='max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'>";
 					echo button::create(['type'=>'button','class'=>'link','label'=>$text['label-disconnect'],'onclick'=>"event.stopPropagation(); modal_open('".$disconnect_modal_id."');"]);
+					echo " | ";
+					echo button::create(['type'=>'button','class'=>'link','label'=>$text['label-park'],'link'=>$park_url,'onclick'=>'event.stopPropagation();']);
 					echo "&nbsp;</td>\n";
 				} else {
 					echo "	<td style='max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'>&nbsp;</td>\n";
