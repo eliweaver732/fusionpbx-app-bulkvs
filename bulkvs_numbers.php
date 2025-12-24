@@ -104,26 +104,35 @@
 		// Try to load from cache first
 		$numbers = $cache->getNumbers($trunk_group);
 		
-		// If cache is empty, fall back to API
+		// If cache is empty, sync from API immediately (synchronous)
 		if (empty($numbers)) {
 			$use_cache = false;
-			require_once "resources/classes/bulkvs_api.php";
-			$bulkvs_api = new bulkvs_api($settings);
-			$api_response = $bulkvs_api->getNumbers($trunk_group);
-			
-			// Handle API response - it may be an array of numbers or an object with a data property
-			if (isset($api_response['data']) && is_array($api_response['data'])) {
-				$numbers = $api_response['data'];
-			} elseif (is_array($api_response)) {
-				$numbers = $api_response;
+			// Trigger immediate sync to populate cache
+			try {
+				$sync_result = $cache->syncNumbers($trunk_group);
+				// Reload from cache after sync
+				$numbers = $cache->getNumbers($trunk_group);
+			} catch (Exception $sync_error) {
+				// If sync fails, fall back to direct API call
+				error_log("BulkVS cache sync failed: " . $sync_error->getMessage());
+				require_once "resources/classes/bulkvs_api.php";
+				$bulkvs_api = new bulkvs_api($settings);
+				$api_response = $bulkvs_api->getNumbers($trunk_group);
+				
+				// Handle API response - it may be an array of numbers or an object with a data property
+				if (isset($api_response['data']) && is_array($api_response['data'])) {
+					$numbers = $api_response['data'];
+				} elseif (is_array($api_response)) {
+					$numbers = $api_response;
+				}
+				
+				// Filter out empty/invalid entries
+				$numbers = array_filter($numbers, function($number) {
+					$tn = $number['TN'] ?? $number['tn'] ?? $number['telephoneNumber'] ?? '';
+					return !empty($tn);
+				});
+				$numbers = array_values($numbers); // Re-index array
 			}
-			
-			// Filter out empty/invalid entries
-			$numbers = array_filter($numbers, function($number) {
-				$tn = $number['TN'] ?? $number['tn'] ?? $number['telephoneNumber'] ?? '';
-				return !empty($tn);
-			});
-			$numbers = array_values($numbers); // Re-index array
 		}
 		
 		// Fetch E911 records from cache
@@ -131,15 +140,23 @@
 		try {
 			$e911_records = $cache->getE911Records();
 			
-			// If cache is empty, try API
+			// If cache is empty, sync from API immediately
 			if (empty($e911_records)) {
-				require_once "resources/classes/bulkvs_api.php";
-				$bulkvs_api = new bulkvs_api($settings);
-				$e911_response = $bulkvs_api->getE911Records();
-				if (isset($e911_response['data']) && is_array($e911_response['data'])) {
-					$e911_records = $e911_response['data'];
-				} elseif (is_array($e911_response)) {
-					$e911_records = $e911_response;
+				try {
+					$sync_result = $cache->syncE911();
+					// Reload from cache after sync
+					$e911_records = $cache->getE911Records();
+				} catch (Exception $sync_error) {
+					// If sync fails, fall back to direct API call
+					error_log("BulkVS E911 cache sync failed: " . $sync_error->getMessage());
+					require_once "resources/classes/bulkvs_api.php";
+					$bulkvs_api = new bulkvs_api($settings);
+					$e911_response = $bulkvs_api->getE911Records();
+					if (isset($e911_response['data']) && is_array($e911_response['data'])) {
+						$e911_records = $e911_response['data'];
+					} elseif (is_array($e911_response)) {
+						$e911_records = $e911_response;
+					}
 				}
 			}
 			

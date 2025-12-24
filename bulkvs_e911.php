@@ -100,17 +100,26 @@
 		// Try to load from cache first
 		$e911_records = $cache->getE911Records();
 		
-		// If cache is empty, fall back to API
+		// If cache is empty, sync from API immediately (synchronous)
 		if (empty($e911_records)) {
-			require_once "resources/classes/bulkvs_api.php";
-			$bulkvs_api = new bulkvs_api($settings);
-			$api_response = $bulkvs_api->getE911Records();
-			
-			// Handle API response - it may be an array of records or an object with a data property
-			if (isset($api_response['data']) && is_array($api_response['data'])) {
-				$e911_records = $api_response['data'];
-			} elseif (is_array($api_response)) {
-				$e911_records = $api_response;
+			// Trigger immediate sync to populate cache
+			try {
+				$sync_result = $cache->syncE911();
+				// Reload from cache after sync
+				$e911_records = $cache->getE911Records();
+			} catch (Exception $sync_error) {
+				// If sync fails, fall back to direct API call
+				error_log("BulkVS E911 cache sync failed: " . $sync_error->getMessage());
+				require_once "resources/classes/bulkvs_api.php";
+				$bulkvs_api = new bulkvs_api($settings);
+				$api_response = $bulkvs_api->getE911Records();
+				
+				// Handle API response - it may be an array of records or an object with a data property
+				if (isset($api_response['data']) && is_array($api_response['data'])) {
+					$e911_records = $api_response['data'];
+				} elseif (is_array($api_response)) {
+					$e911_records = $api_response;
+				}
 			}
 		}
 		
