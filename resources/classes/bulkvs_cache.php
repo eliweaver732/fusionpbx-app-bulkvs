@@ -422,16 +422,17 @@ class bulkvs_cache {
 				}
 			}
 			
-			// Remove numbers from cache that are no longer in API response (if trunk_group is specified)
-			// Only do this if we successfully inserted all numbers
-			if (!empty($trunk_group) && $failed_count == 0) {
+			// Remove numbers from cache that are no longer in API response
+			// This ensures the cache is an exact match of what the API returns
+			if (!empty($trunk_group)) {
+				// Build list of TNs from API response
 				$tn_list = array_map(function($n) {
 					return $n['TN'] ?? $n['tn'] ?? $n['telephoneNumber'] ?? '';
 				}, $numbers);
 				$tn_list = array_filter($tn_list);
 				
-				if (!empty($tn_list) && count($tn_list) == $total_records) {
-					// Only delete if we have all TNs and no failures
+				if (!empty($tn_list)) {
+					// Delete numbers in this trunk_group that are not in the API response
 					$placeholders = [];
 					$delete_params = ['trunk_group' => $trunk_group];
 					foreach ($tn_list as $index => $tn) {
@@ -441,12 +442,66 @@ class bulkvs_cache {
 					
 					$sql_delete = "DELETE FROM v_bulkvs_numbers_cache ";
 					$sql_delete .= "WHERE trunk_group = :trunk_group ";
-					$sql_delete .= "AND tn NOT IN (" . implode(', ', $placeholders) . ") ";
+					if (!empty($placeholders)) {
+						$sql_delete .= "AND tn NOT IN (" . implode(', ', $placeholders) . ") ";
+					} else {
+						// If API returned no numbers, delete all for this trunk_group
+						$sql_delete .= "AND tn IS NOT NULL ";
+					}
 					
 					try {
-						$this->database->execute($sql_delete, $delete_params);
+						$delete_result = $this->database->execute($sql_delete, $delete_params);
+						// Log deletion for debugging (only if significant number deleted)
+						$deleted_count = is_array($delete_result) ? count($delete_result) : 0;
+						if ($deleted_count > 0) {
+							error_log("BulkVS: Deleted $deleted_count numbers no longer in API response for trunk_group: $trunk_group");
+						}
 					} catch (Exception $delete_e) {
 						error_log("BulkVS: Error deleting old numbers: " . $delete_e->getMessage());
+					}
+				} else {
+					// API returned no numbers - delete all for this trunk_group
+					try {
+						$sql_delete_all = "DELETE FROM v_bulkvs_numbers_cache WHERE trunk_group = :trunk_group";
+						$this->database->execute($sql_delete_all, ['trunk_group' => $trunk_group]);
+					} catch (Exception $delete_e) {
+						error_log("BulkVS: Error deleting all numbers for trunk_group: " . $delete_e->getMessage());
+					}
+				}
+			} else {
+				// No trunk_group filter - delete numbers not in API response across all trunk groups
+				$tn_list = array_map(function($n) {
+					return $n['TN'] ?? $n['tn'] ?? $n['telephoneNumber'] ?? '';
+				}, $numbers);
+				$tn_list = array_filter($tn_list);
+				
+				if (!empty($tn_list)) {
+					$placeholders = [];
+					$delete_params = [];
+					foreach ($tn_list as $index => $tn) {
+						$placeholders[] = ':tn_' . $index;
+						$delete_params['tn_' . $index] = $tn;
+					}
+					
+					$sql_delete = "DELETE FROM v_bulkvs_numbers_cache ";
+					$sql_delete .= "WHERE tn NOT IN (" . implode(', ', $placeholders) . ") ";
+					
+					try {
+						$delete_result = $this->database->execute($sql_delete, $delete_params);
+						$deleted_count = is_array($delete_result) ? count($delete_result) : 0;
+						if ($deleted_count > 0) {
+							error_log("BulkVS: Deleted $deleted_count numbers no longer in API response");
+						}
+					} catch (Exception $delete_e) {
+						error_log("BulkVS: Error deleting old numbers: " . $delete_e->getMessage());
+					}
+				} else {
+					// API returned no numbers - delete all
+					try {
+						$sql_delete_all = "DELETE FROM v_bulkvs_numbers_cache";
+						$this->database->execute($sql_delete_all, null);
+					} catch (Exception $delete_e) {
+						error_log("BulkVS: Error deleting all numbers: " . $delete_e->getMessage());
 					}
 				}
 			}
@@ -682,6 +737,7 @@ class bulkvs_cache {
 			}
 			
 			// Remove records from cache that are no longer in API response
+			// This ensures the cache is an exact match of what the API returns
 			$tn_list = array_map(function($r) {
 				return $r['TN'] ?? $r['tn'] ?? '';
 			}, $records);
@@ -698,7 +754,23 @@ class bulkvs_cache {
 				$sql_delete = "DELETE FROM v_bulkvs_e911_cache ";
 				$sql_delete .= "WHERE tn NOT IN (" . implode(', ', $placeholders) . ") ";
 				
-				$this->database->execute($sql_delete, $delete_params);
+				try {
+					$delete_result = $this->database->execute($sql_delete, $delete_params);
+					$deleted_count = is_array($delete_result) ? count($delete_result) : 0;
+					if ($deleted_count > 0) {
+						error_log("BulkVS E911: Deleted $deleted_count records no longer in API response");
+					}
+				} catch (Exception $delete_e) {
+					error_log("BulkVS E911: Error deleting old records: " . $delete_e->getMessage());
+				}
+			} else {
+				// API returned no records - delete all
+				try {
+					$sql_delete_all = "DELETE FROM v_bulkvs_e911_cache";
+					$this->database->execute($sql_delete_all, null);
+				} catch (Exception $delete_e) {
+					error_log("BulkVS E911: Error deleting all records: " . $delete_e->getMessage());
+				}
 			}
 			
 			$total_records = count($records);
