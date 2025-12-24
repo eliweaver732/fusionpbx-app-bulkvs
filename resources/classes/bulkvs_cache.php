@@ -275,6 +275,17 @@ class bulkvs_cache {
 			// Upsert each number
 			error_log("BulkVS: Starting to upsert " . count($numbers) . " numbers");
 			$inserted_count = 0;
+			$failed_count = 0;
+			
+			// Test database connection first
+			try {
+				$test_sql = "SELECT 1 as test";
+				$test_result = $this->database->select($test_sql, null, 'row');
+				error_log("BulkVS: Database connection test: " . ($test_result ? 'OK' : 'FAILED'));
+			} catch (Exception $e) {
+				error_log("BulkVS: Database connection test FAILED: " . $e->getMessage());
+			}
+			
 			foreach ($numbers as $number) {
 				$tn = $number['TN'] ?? $number['tn'] ?? $number['telephoneNumber'] ?? '';
 				if (empty($tn)) {
@@ -366,20 +377,57 @@ class bulkvs_cache {
 				];
 				
 				try {
-					$this->database->execute($sql, $parameters);
+					// Try execute and check result
+					$result = @$this->database->execute($sql, $parameters);
+					
+					// Verify the insert actually worked by checking if the record exists
+					$verify_sql = "SELECT cache_uuid FROM v_bulkvs_numbers_cache WHERE tn = :tn";
+					if (!empty($trunk_group)) {
+						$verify_sql .= " AND trunk_group = :trunk_group";
+					}
+					$verify_params = ['tn' => $tn];
+					if (!empty($trunk_group)) {
+						$verify_params['trunk_group'] = $trunk_group;
+					}
+					
+					$verify_result = $this->database->select($verify_sql, $verify_params, 'row');
+					
+					if (empty($verify_result)) {
+						$failed_count++;
+						if ($failed_count <= 5) { // Only log first 5 failures to avoid spam
+							error_log("BulkVS: Insert FAILED for TN $tn - record not found after insert");
+							error_log("BulkVS: SQL length: " . strlen($sql));
+							error_log("BulkVS: Parameters: " . json_encode(array_keys($parameters)));
+						}
+						continue;
+					}
+					
 					$inserted_count++;
-					if ($inserted_count % 10 == 0) {
-						error_log("BulkVS: Inserted $inserted_count numbers so far...");
+					if ($inserted_count % 100 == 0) {
+						error_log("BulkVS: Successfully inserted $inserted_count numbers (failed: $failed_count)...");
+						// Verify periodically that data is actually being saved
+						$quick_check = "SELECT COUNT(*) as count FROM v_bulkvs_numbers_cache";
+						if (!empty($trunk_group)) {
+							$quick_check .= " WHERE trunk_group = :trunk_group";
+							$quick_params = ['trunk_group' => $trunk_group];
+						} else {
+							$quick_params = [];
+						}
+						$quick_result = $this->database->select($quick_check, $quick_params, 'row');
+						$quick_count = isset($quick_result['count']) ? (int)$quick_result['count'] : 0;
+						error_log("BulkVS: Quick verification at $inserted_count - found $quick_count records in DB");
 					}
 				} catch (Exception $e) {
-					error_log("BulkVS cache insert error for TN $tn: " . $e->getMessage());
-					error_log("SQL: " . substr($sql, 0, 500));
-					error_log("Parameters: " . json_encode($parameters));
+					$failed_count++;
+					if ($failed_count <= 5) {
+						error_log("BulkVS cache insert error for TN $tn: " . $e->getMessage());
+						error_log("BulkVS: SQL: " . substr($sql, 0, 500));
+						error_log("BulkVS: Parameters keys: " . implode(', ', array_keys($parameters)));
+					}
 					// Don't throw - continue with other records
-					error_log("Continuing with other records...");
 				}
 			}
-			error_log("BulkVS: Finished upserting. Total inserted/updated: $inserted_count out of " . count($numbers) . " numbers");
+			error_log("BulkVS: Finished upserting. Successfully inserted: $inserted_count, Failed: $failed_count, Total: " . count($numbers) . " numbers");
 			
 			// Verify data was actually inserted
 			$verify_sql = "SELECT COUNT(*) as count FROM v_bulkvs_numbers_cache ";
