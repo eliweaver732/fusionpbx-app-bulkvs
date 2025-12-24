@@ -44,6 +44,7 @@
 //get sync type from request
 	$sync_type = $_GET['type'] ?? $_POST['type'] ?? '';
 	$reset = isset($_GET['reset']) || isset($_POST['reset']);
+	$force_reset = isset($_GET['force_reset']) || isset($_POST['force_reset']);
 	
 	if (empty($sync_type) || !in_array($sync_type, ['numbers', 'e911'])) {
 		echo json_encode(['success' => false, 'message' => 'Invalid sync type']);
@@ -53,6 +54,18 @@
 //load cache class
 	require_once "resources/classes/bulkvs_cache.php";
 	$cache = new bulkvs_cache($database, $settings);
+
+//handle force reset request (reset sync_in_progress flag)
+	if ($force_reset) {
+		try {
+			$sql = "UPDATE v_bulkvs_sync_status SET sync_in_progress = false WHERE sync_type = :sync_type";
+			$database->execute($sql, ['sync_type' => $sync_type]);
+			echo json_encode(['success' => true, 'message' => 'Force reset successful']);
+		} catch (Exception $e) {
+			echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+		}
+		exit;
+	}
 
 //handle reset request (reset last_record_count to current_record_count)
 	if ($reset) {

@@ -80,6 +80,12 @@ class bulkvs_cache {
 		try {
 			$results = $this->database->select($sql, $parameters, 'all');
 			error_log("BulkVS getNumbers: Query returned " . count($results) . " rows for trunk_group: " . ($trunk_group ?? 'null'));
+			if (count($results) == 0 && !empty($trunk_group)) {
+				// Debug: Check if there are any records at all
+				$sql_debug = "SELECT COUNT(*) as total, COUNT(CASE WHEN trunk_group = :trunk_group THEN 1 END) as matching FROM v_bulkvs_numbers_cache";
+				$debug_result = $this->database->select($sql_debug, ['trunk_group' => $trunk_group], 'row');
+				error_log("BulkVS getNumbers DEBUG: Total records: " . ($debug_result['total'] ?? 0) . ", Matching trunk_group: " . ($debug_result['matching'] ?? 0));
+			}
 		} catch (Exception $e) {
 			error_log("BulkVS getNumbers error: " . $e->getMessage());
 			error_log("SQL: " . $sql);
@@ -188,13 +194,14 @@ class bulkvs_cache {
 	 * @return array Sync result with success status and record counts
 	 */
 	public function syncNumbers($trunk_group = null) {
-		// Check if sync is already in progress (but allow if it's been more than 5 minutes - might be stale)
+		// Check if sync is already in progress (but allow if it's been more than 2 minutes - might be stale)
 		$sync_status = $this->getSyncStatus('numbers');
 		if ($sync_status && isset($sync_status['sync_in_progress']) && $sync_status['sync_in_progress']) {
-			// Check if sync is stale (more than 5 minutes old)
+			// Check if sync is stale (more than 2 minutes old)
 			$last_sync_start = isset($sync_status['last_sync_start']) ? strtotime($sync_status['last_sync_start']) : 0;
 			$now = time();
-			if (($now - $last_sync_start) < 300) { // 5 minutes
+			if (($now - $last_sync_start) < 120) { // 2 minutes
+				error_log("BulkVS: Sync already in progress (started " . ($now - $last_sync_start) . " seconds ago)");
 				return [
 					'success' => false,
 					'message' => 'Sync already in progress',
@@ -203,7 +210,14 @@ class bulkvs_cache {
 				];
 			} else {
 				// Stale sync - reset it
-				error_log("BulkVS: Resetting stale sync_in_progress flag");
+				error_log("BulkVS: Resetting stale sync_in_progress flag (started " . ($now - $last_sync_start) . " seconds ago)");
+				// Force reset the flag
+				try {
+					$sql_reset = "UPDATE v_bulkvs_sync_status SET sync_in_progress = false WHERE sync_type = 'numbers'";
+					$this->database->execute($sql_reset, null);
+				} catch (Exception $e) {
+					error_log("BulkVS: Error resetting stale flag: " . $e->getMessage());
+				}
 			}
 		}
 		
@@ -365,7 +379,23 @@ class bulkvs_cache {
 					error_log("Continuing with other records...");
 				}
 			}
-			error_log("BulkVS: Finished upserting. Total inserted/updated: $inserted_count");
+			error_log("BulkVS: Finished upserting. Total inserted/updated: $inserted_count out of " . count($numbers) . " numbers");
+			
+			// Verify data was actually inserted
+			$verify_sql = "SELECT COUNT(*) as count FROM v_bulkvs_numbers_cache ";
+			if (!empty($trunk_group)) {
+				$verify_sql .= "WHERE trunk_group = :trunk_group ";
+				$verify_params = ['trunk_group' => $trunk_group];
+			} else {
+				$verify_params = [];
+			}
+			try {
+				$verify_result = $this->database->select($verify_sql, $verify_params, 'row');
+				$verify_count = isset($verify_result['count']) ? (int)$verify_result['count'] : 0;
+				error_log("BulkVS: Verification query shows $verify_count records in cache for trunk_group: " . ($trunk_group ?? 'all'));
+			} catch (Exception $e) {
+				error_log("BulkVS: Verification query failed: " . $e->getMessage());
+			}
 			
 			// Remove numbers from cache that are no longer in API response (if trunk_group is specified)
 			if (!empty($trunk_group)) {
@@ -393,31 +423,57 @@ class bulkvs_cache {
 			$total_records = count($numbers);
 			$last_record_count = $current_count;
 			
-			// Update sync status
-			$this->updateSyncStatus('numbers', [
-				'sync_in_progress' => false,
-				'sync_status' => 'success',
-				'last_sync_end' => date('Y-m-d H:i:s'),
-				'last_record_count' => $last_record_count,
-				'current_record_count' => $total_records,
-				'error_message' => null
-			]);
+			// Update sync status - MUST reset sync_in_progress
+			error_log("BulkVS: Updating sync status - resetting sync_in_progress to false");
+			try {
+				$this->updateSyncStatus('numbers', [
+					'sync_in_progress' => false,
+					'sync_status' => 'success',
+					'last_sync_end' => date('Y-m-d H:i:s'),
+					'last_record_count' => $last_record_count,
+					'current_record_count' => $total_records,
+					'error_message' => null
+				]);
+				error_log("BulkVS: Sync status updated successfully");
+			} catch (Exception $status_error) {
+				error_log("BulkVS: ERROR updating sync status: " . $status_error->getMessage());
+				// Try to force reset the flag
+				try {
+					$sql_reset = "UPDATE v_bulkvs_sync_status SET sync_in_progress = false, sync_status = 'success' WHERE sync_type = 'numbers'";
+					$this->database->execute($sql_reset, null);
+					error_log("BulkVS: Force reset sync_in_progress flag");
+				} catch (Exception $reset_error) {
+					error_log("BulkVS: ERROR force resetting sync flag: " . $reset_error->getMessage());
+				}
+			}
 			
 			return [
 				'success' => true,
 				'new_records' => $total_records - $last_record_count,
 				'total_records' => $total_records,
-				'updated_count' => $updated_count
+				'updated_count' => $inserted_count
 			];
 			
 		} catch (Exception $e) {
-			// Update sync status with error
-			$this->updateSyncStatus('numbers', [
-				'sync_in_progress' => false,
-				'sync_status' => 'error',
-				'last_sync_end' => date('Y-m-d H:i:s'),
-				'error_message' => $e->getMessage()
-			]);
+			// Update sync status with error - MUST reset sync_in_progress
+			error_log("BulkVS: Sync error occurred: " . $e->getMessage());
+			try {
+				$this->updateSyncStatus('numbers', [
+					'sync_in_progress' => false,
+					'sync_status' => 'error',
+					'last_sync_end' => date('Y-m-d H:i:s'),
+					'error_message' => $e->getMessage()
+				]);
+			} catch (Exception $status_error) {
+				error_log("BulkVS: ERROR updating sync status on error: " . $status_error->getMessage());
+				// Try to force reset the flag
+				try {
+					$sql_reset = "UPDATE v_bulkvs_sync_status SET sync_in_progress = false, sync_status = 'error' WHERE sync_type = 'numbers'";
+					$this->database->execute($sql_reset, null);
+				} catch (Exception $reset_error) {
+					error_log("BulkVS: ERROR force resetting sync flag on error: " . $reset_error->getMessage());
+				}
+			}
 			
 			return [
 				'success' => false,
@@ -433,13 +489,14 @@ class bulkvs_cache {
 	 * @return array Sync result with success status and record counts
 	 */
 	public function syncE911() {
-		// Check if sync is already in progress (but allow if it's been more than 5 minutes - might be stale)
+		// Check if sync is already in progress (but allow if it's been more than 2 minutes - might be stale)
 		$sync_status = $this->getSyncStatus('e911');
 		if ($sync_status && isset($sync_status['sync_in_progress']) && $sync_status['sync_in_progress']) {
-			// Check if sync is stale (more than 5 minutes old)
+			// Check if sync is stale (more than 2 minutes old)
 			$last_sync_start = isset($sync_status['last_sync_start']) ? strtotime($sync_status['last_sync_start']) : 0;
 			$now = time();
-			if (($now - $last_sync_start) < 300) { // 5 minutes
+			if (($now - $last_sync_start) < 120) { // 2 minutes
+				error_log("BulkVS E911: Sync already in progress (started " . ($now - $last_sync_start) . " seconds ago)");
 				return [
 					'success' => false,
 					'message' => 'Sync already in progress',
@@ -448,7 +505,14 @@ class bulkvs_cache {
 				];
 			} else {
 				// Stale sync - reset it
-				error_log("BulkVS: Resetting stale sync_in_progress flag");
+				error_log("BulkVS E911: Resetting stale sync_in_progress flag (started " . ($now - $last_sync_start) . " seconds ago)");
+				// Force reset the flag
+				try {
+					$sql_reset = "UPDATE v_bulkvs_sync_status SET sync_in_progress = false WHERE sync_type = 'e911'";
+					$this->database->execute($sql_reset, null);
+				} catch (Exception $e) {
+					error_log("BulkVS E911: Error resetting stale flag: " . $e->getMessage());
+				}
 			}
 		}
 		
@@ -590,15 +654,29 @@ class bulkvs_cache {
 			$total_records = count($records);
 			$last_record_count = $current_count;
 			
-			// Update sync status
-			$this->updateSyncStatus('e911', [
-				'sync_in_progress' => false,
-				'sync_status' => 'success',
-				'last_sync_end' => date('Y-m-d H:i:s'),
-				'last_record_count' => $last_record_count,
-				'current_record_count' => $total_records,
-				'error_message' => null
-			]);
+			// Update sync status - MUST reset sync_in_progress
+			error_log("BulkVS E911: Updating sync status - resetting sync_in_progress to false");
+			try {
+				$this->updateSyncStatus('e911', [
+					'sync_in_progress' => false,
+					'sync_status' => 'success',
+					'last_sync_end' => date('Y-m-d H:i:s'),
+					'last_record_count' => $last_record_count,
+					'current_record_count' => $total_records,
+					'error_message' => null
+				]);
+				error_log("BulkVS E911: Sync status updated successfully");
+			} catch (Exception $status_error) {
+				error_log("BulkVS E911: ERROR updating sync status: " . $status_error->getMessage());
+				// Try to force reset the flag
+				try {
+					$sql_reset = "UPDATE v_bulkvs_sync_status SET sync_in_progress = false, sync_status = 'success' WHERE sync_type = 'e911'";
+					$this->database->execute($sql_reset, null);
+					error_log("BulkVS E911: Force reset sync_in_progress flag");
+				} catch (Exception $reset_error) {
+					error_log("BulkVS E911: ERROR force resetting sync flag: " . $reset_error->getMessage());
+				}
+			}
 			
 			return [
 				'success' => true,
@@ -608,13 +686,25 @@ class bulkvs_cache {
 			];
 			
 		} catch (Exception $e) {
-			// Update sync status with error
-			$this->updateSyncStatus('e911', [
-				'sync_in_progress' => false,
-				'sync_status' => 'error',
-				'last_sync_end' => date('Y-m-d H:i:s'),
-				'error_message' => $e->getMessage()
-			]);
+			// Update sync status with error - MUST reset sync_in_progress
+			error_log("BulkVS E911: Sync error occurred: " . $e->getMessage());
+			try {
+				$this->updateSyncStatus('e911', [
+					'sync_in_progress' => false,
+					'sync_status' => 'error',
+					'last_sync_end' => date('Y-m-d H:i:s'),
+					'error_message' => $e->getMessage()
+				]);
+			} catch (Exception $status_error) {
+				error_log("BulkVS E911: ERROR updating sync status on error: " . $status_error->getMessage());
+				// Try to force reset the flag
+				try {
+					$sql_reset = "UPDATE v_bulkvs_sync_status SET sync_in_progress = false, sync_status = 'error' WHERE sync_type = 'e911'";
+					$this->database->execute($sql_reset, null);
+				} catch (Exception $reset_error) {
+					error_log("BulkVS E911: ERROR force resetting sync flag on error: " . $reset_error->getMessage());
+				}
+			}
 			
 			return [
 				'success' => false,
@@ -731,7 +821,15 @@ class bulkvs_cache {
 			if (!empty($updates)) {
 				$sql .= implode(', ', $updates);
 				$sql .= " WHERE sync_type = :sync_type ";
-				$this->database->execute($sql, $parameters);
+				try {
+					$this->database->execute($sql, $parameters);
+					error_log("BulkVS: Updated sync status for " . $sync_type . " - sync_in_progress: " . (isset($data['sync_in_progress']) ? ($data['sync_in_progress'] ? 'true' : 'false') : 'not set'));
+				} catch (Exception $e) {
+					error_log("BulkVS: ERROR executing sync status update: " . $e->getMessage());
+					error_log("BulkVS: SQL: " . $sql);
+					error_log("BulkVS: Parameters: " . json_encode($parameters));
+					throw $e;
+				}
 			}
 		}
 	}
