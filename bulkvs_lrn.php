@@ -42,7 +42,7 @@
 	$settings = new settings(['database' => $database, 'domain_uuid' => $domain_uuid]);
 
 //get API key from settings
-	$api_key = $settings->get('bulkvs', 'api_key', '');
+	$api_key = $settings->get('bulkvs', 'api_secret', '');
 
 //process form submission
 	$phone_number = $_POST['phone_number'] ?? $_GET['phone_number'] ?? '';
