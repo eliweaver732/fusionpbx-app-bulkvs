@@ -121,10 +121,12 @@
 	echo "<div class='card'>\n";
 	echo "	<div class='subheading'>".$text['description-lrn-lookup']."</div>\n";
 	echo "	<form method='post' action=''>\n";
-	echo "		<table class='list'>\n";
+	echo "		<table width='100%' border='0' cellpadding='0' cellspacing='0'>\n";
 	echo "			<tr>\n";
-	echo "				<td class='vncell' style='width: 200px;'>".$text['label-telephone-number']."</td>\n";
-	echo "				<td class='vtable'>\n";
+	echo "				<td width='30%' class='vncell' valign='top' align='left' nowrap='nowrap'>\n";
+	echo "					".$text['label-telephone-number']."\n";
+	echo "				</td>\n";
+	echo "				<td width='70%' class='vtable' align='left'>\n";
 	echo "					<input type='text' name='phone_number' class='formfld' value='".escape($phone_number)."' placeholder='e.g., 7174882203' style='width: 200px;'>\n";
 	echo "					<input type='submit' class='btn' value='".$text['button-submit']."'>\n";
 	echo "				</td>\n";
