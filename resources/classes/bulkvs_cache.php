@@ -396,13 +396,38 @@ class bulkvs_cache {
 				];
 				
 				try {
-					// Try to get PDO connection directly - FusionPBX database class wraps PDO
+					// Try to get PDO connection directly - FusionPBX uses $this->db (public property)
 					$pdo = null;
-					$reflection = new ReflectionClass($this->database);
-					if ($reflection->hasProperty('pdo')) {
-						$pdo_prop = $reflection->getProperty('pdo');
-						$pdo_prop->setAccessible(true);
-						$pdo = $pdo_prop->getValue($this->database);
+					
+					// Method 1: Try public $db property (FusionPBX uses this)
+					if (property_exists($this->database, 'db') && $this->database->db instanceof PDO) {
+						$pdo = $this->database->db;
+						if ($failed_count < 3) {
+							error_log("BulkVS: Found PDO via public db property");
+						}
+					}
+					
+					// Method 2: Try ReflectionClass to access private/protected properties
+					if (!$pdo instanceof PDO) {
+						try {
+							$reflection = new ReflectionClass($this->database);
+							$props = ['db', 'pdo', 'connection', 'conn'];
+							foreach ($props as $prop_name) {
+								if ($reflection->hasProperty($prop_name)) {
+									$prop = $reflection->getProperty($prop_name);
+									$prop->setAccessible(true);
+									$pdo = $prop->getValue($this->database);
+									if ($pdo instanceof PDO) {
+										if ($failed_count < 3) {
+											error_log("BulkVS: Found PDO via ReflectionClass property: $prop_name");
+										}
+										break;
+									}
+								}
+							}
+						} catch (Exception $reflection_e) {
+							// Reflection failed
+						}
 					}
 					
 					// Use PDO directly if available - it gives us better error messages
@@ -425,6 +450,7 @@ class bulkvs_cache {
 								if ($failed_count < 3) {
 									error_log("BulkVS: PDO direct execute error: " . json_encode($error_info));
 									error_log("BulkVS: PDO error code: " . $stmt->errorCode());
+									error_log("BulkVS: SQL: " . substr($sql, 0, 300));
 								}
 								$result = false;
 							} else {
@@ -444,10 +470,32 @@ class bulkvs_cache {
 							$result = false;
 						}
 					} else {
-						// Fallback to database->execute if PDO not available
+						// Use database->execute() - FusionPBX's execute() catches PDOException and stores error in $this->message
 						$result = $this->database->execute($sql, $parameters);
-						if ($failed_count < 3 && $result === false) {
-							error_log("BulkVS: database->execute() returned false, PDO not available");
+						
+						// Check for errors - execute() returns false on error and stores error in $this->message
+						if ($result === false) {
+							// Get the error from $this->message property (FusionPBX stores PDOException details here)
+							if (property_exists($this->database, 'message') && is_array($this->database->message)) {
+								$error_msg = $this->database->message['message'] ?? 'Unknown error';
+								$error_code = $this->database->message['code'] ?? 'Unknown code';
+								if ($failed_count < 3) {
+									error_log("BulkVS: database->execute() FAILED - Error: $error_msg (Code: $error_code)");
+									if (isset($this->database->message['sql'])) {
+										error_log("BulkVS: Failed SQL: " . substr($this->database->message['sql'], 0, 300));
+									}
+									if (isset($this->database->message['file'])) {
+										error_log("BulkVS: Error in file: " . $this->database->message['file'] . " line " . ($this->database->message['line'] ?? '?'));
+									}
+								}
+							} else {
+								if ($failed_count < 3) {
+									error_log("BulkVS: database->execute() returned false, but no error message available");
+								}
+							}
+						} else {
+							// Success - execute() returns array (empty for INSERT), but that's OK
+							$result = true;
 						}
 					}
 					
