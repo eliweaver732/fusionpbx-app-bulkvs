@@ -378,6 +378,8 @@ class bulkvs_cache {
 				$sql .= "data_json = EXCLUDED.data_json, ";
 				$sql .= "last_updated = CURRENT_TIMESTAMP ";
 				
+				// Keep booleans as PHP booleans - PostgreSQL PDO should handle them
+				// But FusionPBX's database class might need them differently
 				$parameters = [
 					'tn' => $tn,
 					'status' => $status,
@@ -386,16 +388,68 @@ class bulkvs_cache {
 					'tier' => $tier,
 					'lidb' => $lidb,
 					'reference_id' => $reference_id,
-					'sms' => $sms,
-					'mms' => $mms,
+					'sms' => $sms, // Keep as PHP boolean
+					'mms' => $mms, // Keep as PHP boolean
 					'portout_pin' => $portout_pin,
 					'trunk_group' => $trunk_group,
 					'data_json' => $data_json
 				];
 				
 				try {
-					// Try execute and check result - NO @ operator to see actual errors
-					$result = $this->database->execute($sql, $parameters);
+					// Try to get PDO connection directly - FusionPBX database class wraps PDO
+					$pdo = null;
+					$reflection = new ReflectionClass($this->database);
+					if ($reflection->hasProperty('pdo')) {
+						$pdo_prop = $reflection->getProperty('pdo');
+						$pdo_prop->setAccessible(true);
+						$pdo = $pdo_prop->getValue($this->database);
+					}
+					
+					// Use PDO directly if available - it gives us better error messages
+					if ($pdo instanceof PDO) {
+						try {
+							$stmt = $pdo->prepare($sql);
+							// Bind parameters with explicit types for booleans
+							foreach ($parameters as $key => $value) {
+								if ($key === 'sms' || $key === 'mms') {
+									$stmt->bindValue(':' . $key, $value, PDO::PARAM_BOOL);
+								} elseif ($value === null) {
+									$stmt->bindValue(':' . $key, null, PDO::PARAM_NULL);
+								} else {
+									$stmt->bindValue(':' . $key, $value);
+								}
+							}
+							$pdo_result = $stmt->execute();
+							if ($pdo_result === false) {
+								$error_info = $stmt->errorInfo();
+								if ($failed_count < 3) {
+									error_log("BulkVS: PDO direct execute error: " . json_encode($error_info));
+									error_log("BulkVS: PDO error code: " . $stmt->errorCode());
+								}
+								$result = false;
+							} else {
+								$rows_affected = $stmt->rowCount();
+								if ($failed_count < 3) {
+									error_log("BulkVS: PDO direct execute SUCCESS for TN $tn - rows affected: $rows_affected");
+								}
+								// PDO worked! Use this result
+								$result = true;
+							}
+						} catch (PDOException $pdo_e) {
+							if ($failed_count < 3) {
+								error_log("BulkVS: PDO Exception: " . $pdo_e->getMessage());
+								error_log("BulkVS: PDO Exception code: " . $pdo_e->getCode());
+								error_log("BulkVS: PDO Exception SQLSTATE: " . $pdo_e->getCode());
+							}
+							$result = false;
+						}
+					} else {
+						// Fallback to database->execute if PDO not available
+						$result = $this->database->execute($sql, $parameters);
+						if ($failed_count < 3 && $result === false) {
+							error_log("BulkVS: database->execute() returned false, PDO not available");
+						}
+					}
 					
 					// Log execute result for debugging
 					if ($failed_count < 3) {
