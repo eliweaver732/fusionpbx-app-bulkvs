@@ -30,6 +30,17 @@
  */
 class bulkvs_cache {
 
+	const SYNC_TYPES = ['numbers', 'e911'];
+
+	const ADVISORY_LOCK_NAMESPACE = 0x42564B53;
+
+	const CANCEL_CHECK_EVERY_ROWS = 50;
+
+	const REFRESH_RULES = [
+		'numbers' => 'any_change',
+		'e911' => 'growth_only',
+	];
+
 	/**
 	 * Database object
 	 * @var database
@@ -141,7 +152,7 @@ class bulkvs_cache {
 		$sql .= "FROM v_bulkvs_e911_cache ";
 		$sql .= "ORDER BY tn ASC ";
 		
-		$results = $this->database->select($sql, null, 'all');
+		$results = $this->database->select($sql, null, 'all') ?: [];
 		
 		// Convert database results to API-like format
 		$records = [];
@@ -181,565 +192,349 @@ class bulkvs_cache {
 	}
 
 	/**
-	 * Sync numbers from API to cache
-	 * @param string $trunk_group Trunk group name
-	 * @return array Sync result with success status and record counts
+	 * The advisory lock belongs to the non-persistent database connection, so a crashed or killed request releases it.
+	 * @param string $sync_type One of SYNC_TYPES
+	 * @param callable|null $still_wanted fn(): bool, checked between rows. Null never cancels.
+	 * @return bulkvs_sync_result
 	 */
-	public function syncNumbers($trunk_group = null) {
-		// Check if sync is already in progress (but allow if it's been more than 2 minutes - might be stale)
-		$sync_status = $this->getSyncStatus('numbers');
-		if ($sync_status && isset($sync_status['sync_in_progress']) && $sync_status['sync_in_progress']) {
-			// Check if sync is stale (more than 2 minutes old)
-			$last_sync_start = isset($sync_status['last_sync_start']) ? strtotime($sync_status['last_sync_start']) : 0;
-			$now = time();
-			if (($now - $last_sync_start) < 120) { // 2 minutes
-				return [
-					'success' => false,
-					'message' => 'Sync already in progress',
-					'new_records' => 0,
-					'total_records' => $sync_status['current_record_count'] ?? 0
-				];
-			} else {
-				// Stale sync - reset it
-				try {
-					$sql_reset = "UPDATE v_bulkvs_sync_status SET sync_in_progress = false WHERE sync_type = 'numbers'";
-					$this->database->execute($sql_reset, null);
-				} catch (Exception $e) {
-					error_log("BulkVS: Error resetting stale sync flag: " . $e->getMessage());
-				}
-			}
+	public function sync(string $sync_type, ?callable $still_wanted = null): bulkvs_sync_result {
+		$lock_key = array_search($sync_type, self::SYNC_TYPES, true);
+		if (!$this->tryLock($lock_key)) {
+			return bulkvs_sync_result::busy();
 		}
-		
-		// Mark sync as in progress
-		$this->updateSyncStatus('numbers', [
-			'sync_in_progress' => true,
-			'sync_status' => 'in_progress',
-			'last_sync_start' => date('Y-m-d H:i:s')
-		]);
-		
+
 		try {
-			require_once __DIR__ . "/bulkvs_api.php";
-			$bulkvs_api = new bulkvs_api($this->settings);
-			
-			// Fetch from API
-			$api_response = $bulkvs_api->getNumbers($trunk_group);
-			
-			// Handle API response format
-			if (isset($api_response['data']) && is_array($api_response['data'])) {
-				$numbers = $api_response['data'];
-			} elseif (is_array($api_response)) {
-				$numbers = $api_response;
-			} else {
-				$numbers = [];
-			}
-			
-			// Filter out empty/invalid entries
-			$numbers = array_filter($numbers, function($number) {
-				$tn = $number['TN'] ?? $number['tn'] ?? $number['telephoneNumber'] ?? '';
-				return !empty($tn);
-			});
-			$numbers = array_values($numbers);
-			
-			$new_count = 0;
-			$updated_count = 0;
-			
-			// Get current count from cache
-			$sql_count = "SELECT COUNT(*) as count FROM v_bulkvs_numbers_cache ";
-			if (!empty($trunk_group)) {
-				$sql_count .= "WHERE trunk_group = :trunk_group ";
-				$parameters_count = ['trunk_group' => $trunk_group];
-			} else {
-				$parameters_count = [];
-			}
-			$current_count_result = $this->database->select($sql_count, $parameters_count, 'row');
-			$current_count = isset($current_count_result['count']) ? (int)$current_count_result['count'] : 0;
-			
-			$inserted_count = 0;
-			$failed_count = 0;
-			
-			foreach ($numbers as $number) {
-				$tn = $number['TN'] ?? $number['tn'] ?? $number['telephoneNumber'] ?? '';
-				if (empty($tn)) {
-					continue;
-				}
-				
-				// Extract fields
-				$status = $number['Status'] ?? $number['status'] ?? '';
-				$lidb = $number['Lidb'] ?? $number['lidb'] ?? '';
-				$reference_id = $number['ReferenceID'] ?? $number['referenceID'] ?? '';
-				$portout_pin = $number['Portout Pin'] ?? $number['portoutPin'] ?? '';
-				
-				$activation_date = '';
-				$rate_center = '';
-				$tier = '';
-				if (isset($number['TN Details']) && is_array($number['TN Details'])) {
-					$tn_details = $number['TN Details'];
-					$activation_date_raw = $tn_details['Activation Date'] ?? $tn_details['activation_date'] ?? '';
-					
-					// Normalize activation_date - fix malformed dates
-					if (!empty($activation_date_raw)) {
-						$activation_date = preg_replace('/(\d{4}-\d{2}-\d{2})\s+(\d{1,2})\s+(\d{2}:\d{2})/', '$1 $2:$3', $activation_date_raw);
-						$activation_date = preg_replace('/(\d{4}-\d{2}-\d{2})\s+(\d{1,2})\s+(\d{2})\s+(\d{2})/', '$1 $2:$3:$4', $activation_date);
-						
-						try {
-							$date_obj = new DateTime($activation_date);
-							$activation_date = $date_obj->format('Y-m-d H:i:s');
-						} catch (Exception $date_e) {
-							error_log("BulkVS: Invalid activation_date format for TN $tn: '$activation_date_raw'");
-							$activation_date = '';
-						}
-					}
-					
-					$rate_center = $tn_details['Rate Center'] ?? $tn_details['rate_center'] ?? '';
-					$tier = $tn_details['Tier'] ?? $tn_details['tier'] ?? '';
-				}
-				
-				$sms = false;
-				$mms = false;
-				if (isset($number['Messaging']) && is_array($number['Messaging'])) {
-					$messaging = $number['Messaging'];
-					if (isset($messaging['Sms'])) {
-						$sms_val = $messaging['Sms'];
-						$sms = ($sms_val === true || $sms_val === 'true' || $sms_val === 1 || $sms_val === '1') ? true : false;
-					}
-					if (isset($messaging['Mms'])) {
-						$mms_val = $messaging['Mms'];
-						$mms = ($mms_val === true || $mms_val === 'true' || $mms_val === 1 || $mms_val === '1') ? true : false;
-					}
-				}
-				
-				// Prepare data for insert/update
-				$data_json = json_encode($number);
-				
-				// Check if record exists
-				$check_sql = "SELECT bulkvs_numbers_cache_uuid FROM v_bulkvs_numbers_cache WHERE tn = :tn";
-				if (!empty($trunk_group)) {
-					$check_sql .= " AND trunk_group = :trunk_group";
-				}
-				$check_params = ['tn' => $tn];
-				if (!empty($trunk_group)) {
-					$check_params['trunk_group'] = $trunk_group;
-				}
-				
-				$existing = $this->database->select($check_sql, $check_params, 'row');
-				
-				$sms_bool = ($sms === true || $sms === 'true' || $sms === 1 || $sms === '1') ? true : false;
-				$mms_bool = ($mms === true || $mms === 'true' || $mms === 1 || $mms === '1') ? true : false;
-				
-				if (empty($existing)) {
-					$new_count++;
-					$sql = "INSERT INTO v_bulkvs_numbers_cache ";
-					$sql .= "(bulkvs_numbers_cache_uuid, tn, status, activation_date, rate_center, tier, lidb, reference_id, ";
-					$sql .= "sms, mms, portout_pin, trunk_group, data_json, last_updated, created) ";
-					$sql .= "VALUES ";
-					$sql .= "(gen_random_uuid(), :tn, :status, :activation_date, :rate_center, :tier, :lidb, :reference_id, ";
-					$sql .= "CAST(:sms AS boolean), CAST(:mms AS boolean), :portout_pin, :trunk_group, :data_json::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ";
-				} else {
-					$updated_count++;
-					$sql = "UPDATE v_bulkvs_numbers_cache SET ";
-					$sql .= "status = :status, ";
-					$sql .= "activation_date = :activation_date, ";
-					$sql .= "rate_center = :rate_center, ";
-					$sql .= "tier = :tier, ";
-					$sql .= "lidb = :lidb, ";
-					$sql .= "reference_id = :reference_id, ";
-					$sql .= "sms = CAST(:sms AS boolean), ";
-					$sql .= "mms = CAST(:mms AS boolean), ";
-					$sql .= "portout_pin = :portout_pin, ";
-					$sql .= "trunk_group = :trunk_group, ";
-					$sql .= "data_json = :data_json::jsonb, ";
-					$sql .= "last_updated = CURRENT_TIMESTAMP ";
-					$sql .= "WHERE tn = :tn";
-					if (!empty($trunk_group)) {
-						$sql .= " AND trunk_group = :trunk_group";
-					}
-				}
-				
-				$sms_param = $sms_bool ? 1 : 0;
-				$mms_param = $mms_bool ? 1 : 0;
-				
-				$parameters = [
-					'tn' => $tn,
-					'status' => $status,
-					'activation_date' => (!empty($activation_date) && $activation_date !== '') ? $activation_date : null,
-					'rate_center' => $rate_center,
-					'tier' => $tier,
-					'lidb' => $lidb,
-					'reference_id' => $reference_id,
-					'sms' => $sms_param,
-					'mms' => $mms_param,
-					'portout_pin' => $portout_pin,
-					'trunk_group' => $trunk_group,
-					'data_json' => $data_json
-				];
-				
-				try {
-					$result = $this->database->execute($sql, $parameters);
-					
-					$verify_sql = "SELECT bulkvs_numbers_cache_uuid FROM v_bulkvs_numbers_cache WHERE tn = :tn";
-					if (!empty($trunk_group)) {
-						$verify_sql .= " AND trunk_group = :trunk_group";
-					}
-					$verify_params = ['tn' => $tn];
-					if (!empty($trunk_group)) {
-						$verify_params['trunk_group'] = $trunk_group;
-					}
-					
-					$verify_result = $this->database->select($verify_sql, $verify_params, 'row');
-					
-					if (empty($verify_result)) {
-						$failed_count++;
-						continue;
-					}
-					
-					$inserted_count++;
-				} catch (Exception $e) {
-					$failed_count++;
-					error_log("BulkVS cache insert error for TN $tn: " . $e->getMessage());
-				}
-			}
-			
-			// Remove numbers from cache that are no longer in API response
-			if (!empty($trunk_group)) {
-				$tn_list = array_map(function($n) {
-					return $n['TN'] ?? $n['tn'] ?? $n['telephoneNumber'] ?? '';
-				}, $numbers);
-				$tn_list = array_filter($tn_list);
-				
-				if (!empty($tn_list)) {
-					$placeholders = [];
-					$delete_params = ['trunk_group' => $trunk_group];
-					foreach ($tn_list as $index => $tn) {
-						$placeholders[] = ':tn_' . $index;
-						$delete_params['tn_' . $index] = $tn;
-					}
-					
-					$sql_delete = "DELETE FROM v_bulkvs_numbers_cache ";
-					$sql_delete .= "WHERE trunk_group = :trunk_group ";
-					$sql_delete .= "AND tn NOT IN (" . implode(', ', $placeholders) . ") ";
-					
-					try {
-						$this->database->execute($sql_delete, $delete_params);
-					} catch (Exception $delete_e) {
-						error_log("BulkVS: Error deleting old numbers: " . $delete_e->getMessage());
-					}
-				}
-			}
-			
-			// Count actual records in database after sync
-			$verify_count_sql = "SELECT COUNT(*) as count FROM v_bulkvs_numbers_cache ";
-			if (!empty($trunk_group)) {
-				$verify_count_sql .= "WHERE trunk_group = :trunk_group ";
-				$verify_count_params = ['trunk_group' => $trunk_group];
-			} else {
-				$verify_count_params = [];
-			}
-			$verify_count_result = $this->database->select($verify_count_sql, $verify_count_params, 'row');
-			$actual_count = isset($verify_count_result['count']) ? (int)$verify_count_result['count'] : 0;
-			
-			$total_records = count($numbers);
-			$last_record_count = $current_count;
-			
-			// Update sync status
-			try {
-				$this->updateSyncStatus('numbers', [
-					'sync_in_progress' => false,
-					'sync_status' => 'success',
-					'last_sync_end' => date('Y-m-d H:i:s'),
-					'last_record_count' => $last_record_count,
-					'current_record_count' => $actual_count,
-					'error_message' => null
+			$this->updateSyncStatus($sync_type, [
+				'sync_status' => 'in_progress',
+				'last_sync_start' => date('Y-m-d H:i:s')
+			]);
+
+			$trunk_group = $this->settings->get('bulkvs', 'trunk_group', '');
+			$before = $this->countRows($sync_type, $trunk_group);
+			$records = $this->fetchRecords($sync_type, $trunk_group);
+
+			if (!$this->upsertRows($sync_type, $records, $trunk_group, $still_wanted ?? function () { return true; })) {
+				$this->updateSyncStatus($sync_type, [
+					'sync_status' => 'cancelled',
+					'last_sync_end' => date('Y-m-d H:i:s')
 				]);
-			} catch (Exception $status_error) {
-				error_log("BulkVS: Error updating sync status: " . $status_error->getMessage());
-				try {
-					$sql_reset = "UPDATE v_bulkvs_sync_status SET sync_in_progress = false, sync_status = 'success' WHERE sync_type = 'numbers'";
-					$this->database->execute($sql_reset, null);
-				} catch (Exception $reset_error) {
-					error_log("BulkVS: Error force resetting sync flag: " . $reset_error->getMessage());
-				}
+				return bulkvs_sync_result::cancelled();
 			}
-			
-			return [
-				'success' => true,
-				'new_records' => $actual_count - $last_record_count,
-				'total_records' => $actual_count,
-				'updated_count' => $inserted_count,
-				'failed_count' => $failed_count,
-				'api_count' => $total_records
-			];
-			
+
+			$this->deleteMissing($sync_type, $records, $trunk_group);
+			$after = $this->countRows($sync_type, $trunk_group);
+
+			$this->updateSyncStatus($sync_type, [
+				'sync_status' => 'success',
+				'last_sync_end' => date('Y-m-d H:i:s'),
+				'last_record_count' => $before,
+				'current_record_count' => $after,
+				'error_message' => null
+			]);
+			return bulkvs_sync_result::completed($after - $before, $after);
 		} catch (Exception $e) {
-			error_log("BulkVS: Sync error: " . $e->getMessage());
-			try {
-				$this->updateSyncStatus('numbers', [
-					'sync_in_progress' => false,
-					'sync_status' => 'error',
-					'last_sync_end' => date('Y-m-d H:i:s'),
-					'error_message' => $e->getMessage()
-				]);
-			} catch (Exception $status_error) {
-				try {
-					$sql_reset = "UPDATE v_bulkvs_sync_status SET sync_in_progress = false, sync_status = 'error' WHERE sync_type = 'numbers'";
-					$this->database->execute($sql_reset, null);
-				} catch (Exception $reset_error) {
-					error_log("BulkVS: Error force resetting sync flag: " . $reset_error->getMessage());
-				}
-			}
-			
-			return [
-				'success' => false,
-				'message' => $e->getMessage(),
-				'new_records' => 0,
-				'total_records' => 0
-			];
+			error_log("BulkVS $sync_type sync error: " . $e->getMessage());
+			$this->updateSyncStatus($sync_type, [
+				'sync_status' => 'error',
+				'last_sync_end' => date('Y-m-d H:i:s'),
+				'error_message' => $e->getMessage()
+			]);
+			return bulkvs_sync_result::failed($e->getMessage());
+		} finally {
+			$this->unlock($lock_key);
 		}
 	}
 
 	/**
-	 * Sync E911 records from API to cache
-	 * @return array Sync result with success status and record counts
+	 * @param string $sync_type One of SYNC_TYPES
+	 * @return bool
 	 */
-	public function syncE911() {
-		$sync_status = $this->getSyncStatus('e911');
-		if ($sync_status && isset($sync_status['sync_in_progress']) && $sync_status['sync_in_progress']) {
-			$last_sync_start = isset($sync_status['last_sync_start']) ? strtotime($sync_status['last_sync_start']) : 0;
-			$now = time();
-			if (($now - $last_sync_start) < 120) {
-				return [
-					'success' => false,
-					'message' => 'Sync already in progress',
-					'new_records' => 0,
-					'total_records' => $sync_status['current_record_count'] ?? 0
-				];
-			} else {
-				try {
-					$sql_reset = "UPDATE v_bulkvs_sync_status SET sync_in_progress = false WHERE sync_type = 'e911'";
-					$this->database->execute($sql_reset, null);
-				} catch (Exception $e) {
-					error_log("BulkVS E911: Error resetting stale sync flag: " . $e->getMessage());
-				}
-			}
-		}
-		
-		$this->updateSyncStatus('e911', [
-			'sync_in_progress' => true,
-			'sync_status' => 'in_progress',
-			'last_sync_start' => date('Y-m-d H:i:s')
-		]);
-		
-		try {
-			require_once __DIR__ . "/bulkvs_api.php";
-			$bulkvs_api = new bulkvs_api($this->settings);
-			
-			$api_response = $bulkvs_api->getE911Records();
-			
-			if (isset($api_response['data']) && is_array($api_response['data'])) {
-				$records = $api_response['data'];
-			} elseif (is_array($api_response)) {
-				$records = $api_response;
-			} else {
-				$records = [];
-			}
-			
-			$records = array_filter($records, function($record) {
-				$tn = $record['TN'] ?? $record['tn'] ?? '';
-				return !empty($tn);
-			});
-			$records = array_values($records);
-			
-			$sql_count = "SELECT COUNT(*) as count FROM v_bulkvs_e911_cache ";
-			$current_count_result = $this->database->select($sql_count, null, 'row');
-			$current_count = isset($current_count_result['count']) ? (int)$current_count_result['count'] : 0;
-			
-			$new_count = 0;
-			$updated_count = 0;
-			
-			foreach ($records as $record) {
-				$tn = $record['TN'] ?? $record['tn'] ?? '';
-				if (empty($tn)) {
-					continue;
-				}
-				
-				$caller_name = $record['Caller Name'] ?? $record['callerName'] ?? '';
-				$address_line1 = $record['Address Line 1'] ?? $record['addressLine1'] ?? '';
-				$address_line2 = $record['Address Line 2'] ?? $record['addressLine2'] ?? '';
-				$city = $record['City'] ?? $record['city'] ?? '';
-				$state = $record['State'] ?? $record['state'] ?? '';
-				$zip = $record['Zip'] ?? $record['zip'] ?? '';
-				$address_id = $record['AddressID'] ?? $record['addressID'] ?? '';
-				
-				$sms_array = [];
-				if (isset($record['Sms']) && is_array($record['Sms'])) {
-					$sms_array = $record['Sms'];
-				}
-				
-				$sql_check = "SELECT bulkvs_e911_cache_uuid FROM v_bulkvs_e911_cache WHERE tn = :tn ";
-				$existing = $this->database->select($sql_check, ['tn' => $tn], 'row');
-				
-				if (empty($existing)) {
-					$new_count++;
-				} else {
-					$updated_count++;
-				}
-				
-				$data_json = json_encode($record);
-				$sms_json = json_encode($sms_array);
-				
-				if (empty($existing)) {
-					$sql = "INSERT INTO v_bulkvs_e911_cache ";
-					$sql .= "(bulkvs_e911_cache_uuid, tn, caller_name, address_line1, address_line2, city, state, zip, ";
-					$sql .= "address_id, sms, data_json, last_updated, created) ";
-					$sql .= "VALUES ";
-					$sql .= "(gen_random_uuid(), :tn, :caller_name, :address_line1, :address_line2, :city, :state, :zip, ";
-					$sql .= ":address_id, :sms::jsonb, :data_json::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ";
-				} else {
-					$sql = "UPDATE v_bulkvs_e911_cache SET ";
-					$sql .= "caller_name = :caller_name, ";
-					$sql .= "address_line1 = :address_line1, ";
-					$sql .= "address_line2 = :address_line2, ";
-					$sql .= "city = :city, ";
-					$sql .= "state = :state, ";
-					$sql .= "zip = :zip, ";
-					$sql .= "address_id = :address_id, ";
-					$sql .= "sms = :sms::jsonb, ";
-					$sql .= "data_json = :data_json::jsonb, ";
-					$sql .= "last_updated = CURRENT_TIMESTAMP ";
-					$sql .= "WHERE tn = :tn ";
-				}
-				
-				$parameters = [
-					'tn' => $tn,
-					'caller_name' => $caller_name,
-					'address_line1' => $address_line1,
-					'address_line2' => $address_line2,
-					'city' => $city,
-					'state' => $state,
-					'zip' => $zip,
-					'address_id' => $address_id,
-					'sms' => $sms_json,
-					'data_json' => $data_json
-				];
-				
-				try {
-					$this->database->execute($sql, $parameters);
-				} catch (Exception $e) {
-					error_log("BulkVS E911 cache insert error for TN $tn: " . $e->getMessage());
-				}
-			}
-			
-			// Remove records from cache that are no longer in API response
-			$tn_list = array_map(function($r) {
-				return $r['TN'] ?? $r['tn'] ?? '';
-			}, $records);
-			$tn_list = array_filter($tn_list);
-			
-			if (!empty($tn_list)) {
-				$placeholders = [];
-				$delete_params = [];
-				foreach ($tn_list as $index => $tn) {
-					$placeholders[] = ':tn_' . $index;
-					$delete_params['tn_' . $index] = $tn;
-				}
-				
-				$sql_delete = "DELETE FROM v_bulkvs_e911_cache ";
-				$sql_delete .= "WHERE tn NOT IN (" . implode(', ', $placeholders) . ") ";
-				
-				try {
-					$this->database->execute($sql_delete, $delete_params);
-				} catch (Exception $delete_e) {
-					error_log("BulkVS E911: Error deleting old records: " . $delete_e->getMessage());
-				}
-			}
-			
-			$total_records = count($records);
-			$last_record_count = $current_count;
-			
-			try {
-				$this->updateSyncStatus('e911', [
-					'sync_in_progress' => false,
-					'sync_status' => 'success',
-					'last_sync_end' => date('Y-m-d H:i:s'),
-					'last_record_count' => $last_record_count,
-					'current_record_count' => $total_records,
-					'error_message' => null
-				]);
-			} catch (Exception $status_error) {
-				error_log("BulkVS E911: Error updating sync status: " . $status_error->getMessage());
-				try {
-					$sql_reset = "UPDATE v_bulkvs_sync_status SET sync_in_progress = false, sync_status = 'success' WHERE sync_type = 'e911'";
-					$this->database->execute($sql_reset, null);
-				} catch (Exception $reset_error) {
-					error_log("BulkVS E911: Error force resetting sync flag: " . $reset_error->getMessage());
-				}
-			}
-			
-			return [
-				'success' => true,
-				'new_records' => $total_records - $last_record_count,
-				'total_records' => $total_records,
-				'updated_count' => $updated_count
-			];
-			
-		} catch (Exception $e) {
-			error_log("BulkVS E911: Sync error: " . $e->getMessage());
-			try {
-				$this->updateSyncStatus('e911', [
-					'sync_in_progress' => false,
-					'sync_status' => 'error',
-					'last_sync_end' => date('Y-m-d H:i:s'),
-					'error_message' => $e->getMessage()
-				]);
-			} catch (Exception $status_error) {
-				try {
-					$sql_reset = "UPDATE v_bulkvs_sync_status SET sync_in_progress = false, sync_status = 'error' WHERE sync_type = 'e911'";
-					$this->database->execute($sql_reset, null);
-				} catch (Exception $reset_error) {
-					error_log("BulkVS E911: Error force resetting sync flag: " . $reset_error->getMessage());
-				}
-			}
-			
-			return [
-				'success' => false,
-				'message' => $e->getMessage(),
-				'new_records' => 0,
-				'total_records' => 0
-			];
-		}
-	}
-
-	/**
-	 * Check if there are new records since last sync
-	 * @param string $sync_type 'numbers' or 'e911'
-	 * @return bool True if new records exist
-	 */
-	public function hasNewRecords($sync_type) {
+	public function refreshAvailable(string $sync_type): bool {
 		$sync_status = $this->getSyncStatus($sync_type);
 		if (!$sync_status) {
 			return false;
 		}
-		
-		$current_count = isset($sync_status['current_record_count']) ? (int)$sync_status['current_record_count'] : 0;
-		$last_count = isset($sync_status['last_record_count']) ? (int)$sync_status['last_record_count'] : 0;
-		
-		return $current_count > $last_count;
+
+		$current_count = (int)$sync_status['current_record_count'];
+		$last_count = (int)$sync_status['last_record_count'];
+		$rule = self::REFRESH_RULES[$sync_type] ?? null;
+		if ($rule === 'any_change') {
+			return $current_count !== $last_count;
+		}
+		if ($rule === 'growth_only') {
+			return $current_count > $last_count;
+		}
+		return false;
 	}
 
 	/**
-	 * Check if there are changes (new or deleted records) since last sync
-	 * @param string $sync_type 'numbers' or 'e911'
-	 * @return bool True if records have changed (added or deleted)
+	 * @param string $sync_type One of SYNC_TYPES
 	 */
-	public function hasChanges($sync_type) {
+	public function acknowledgeRefresh(string $sync_type): void {
 		$sync_status = $this->getSyncStatus($sync_type);
-		if (!$sync_status) {
+		if ($sync_status && isset($sync_status['current_record_count'])) {
+			$this->updateSyncStatus($sync_type, [
+				'last_record_count' => $sync_status['current_record_count']
+			]);
+		}
+	}
+
+	private function tryLock(int $lock_key): bool {
+		$sql = sprintf("SELECT pg_try_advisory_lock(%d, %d)::int", self::ADVISORY_LOCK_NAMESPACE, $lock_key);
+		return (int)$this->database->execute($sql, null, 'column') === 1;
+	}
+
+	private function unlock(int $lock_key): void {
+		$sql = sprintf("SELECT pg_advisory_unlock(%d, %d)", self::ADVISORY_LOCK_NAMESPACE, $lock_key);
+		$this->database->execute($sql, null, 'column');
+	}
+
+	private static function cacheTable(string $sync_type): string {
+		return $sync_type === 'numbers' ? 'v_bulkvs_numbers_cache' : 'v_bulkvs_e911_cache';
+	}
+
+	private static function recordTn(array $record): string {
+		return (string)($record['TN'] ?? $record['tn'] ?? $record['telephoneNumber'] ?? '');
+	}
+
+	private static function normalizeActivationDate($raw, string $tn): string {
+		if ($raw === null || $raw === '') {
+			return '';
+		}
+		$normalized = preg_replace('/(\d{4}-\d{2}-\d{2})\s+(\d{1,2})\s+(\d{2}:\d{2})/', '$1 $2:$3', $raw);
+		$normalized = preg_replace('/(\d{4}-\d{2}-\d{2})\s+(\d{1,2})\s+(\d{2})\s+(\d{2})/', '$1 $2:$3:$4', $normalized);
+		try {
+			return (new DateTime($normalized))->format('Y-m-d H:i:s');
+		} catch (Exception $date_e) {
+			error_log("BulkVS: Invalid activation_date format for TN $tn: '$raw'");
+			return '';
+		}
+	}
+
+	private function countRows(string $sync_type, $trunk_group): int {
+		$sql = "SELECT COUNT(*) FROM " . self::cacheTable($sync_type) . " ";
+		$parameters = null;
+		if ($sync_type === 'numbers' && !empty($trunk_group)) {
+			$sql .= "WHERE trunk_group = :trunk_group ";
+			$parameters = ['trunk_group' => $trunk_group];
+		}
+		return (int)$this->database->select($sql, $parameters, 'column');
+	}
+
+	private function fetchRecords(string $sync_type, $trunk_group): array {
+		require_once __DIR__ . "/bulkvs_api.php";
+		$bulkvs_api = new bulkvs_api($this->settings);
+		$response = $sync_type === 'numbers' ? $bulkvs_api->getNumbers($trunk_group) : $bulkvs_api->getE911Records();
+
+		if (isset($response['data']) && is_array($response['data'])) {
+			$records = $response['data'];
+		} elseif (is_array($response)) {
+			$records = $response;
+		} else {
+			$records = [];
+		}
+
+		return array_values(array_filter($records, function ($record) {
+			return is_array($record) && self::recordTn($record) !== '';
+		}));
+	}
+
+	private function upsertRows(string $sync_type, array $records, $trunk_group, callable $still_wanted): bool {
+		foreach ($records as $index => $record) {
+			if ($index % self::CANCEL_CHECK_EVERY_ROWS === 0 && !$still_wanted()) {
+				return false;
+			}
+			if ($sync_type === 'numbers') {
+				$this->upsertNumber($record, $trunk_group);
+			} else {
+				$this->upsertE911($record);
+			}
+		}
+		return $still_wanted();
+	}
+
+	private function canPruneStaleRows(string $sync_type, array $records, $trunk_group): bool {
+		if (empty($records)) {
 			return false;
 		}
-		
-		$current_count = isset($sync_status['current_record_count']) ? (int)$sync_status['current_record_count'] : 0;
-		$last_count = isset($sync_status['last_record_count']) ? (int)$sync_status['last_record_count'] : 0;
-		
-		return $current_count !== $last_count;
+		if ($sync_type === 'numbers' && empty($trunk_group)) {
+			return false;
+		}
+		return true;
+	}
+
+	private function deleteMissing(string $sync_type, array $records, $trunk_group) {
+		if (!$this->canPruneStaleRows($sync_type, $records, $trunk_group)) {
+			return;
+		}
+
+		$placeholders = [];
+		$parameters = [];
+		foreach ($records as $index => $record) {
+			$placeholders[] = ':tn_' . $index;
+			$parameters['tn_' . $index] = self::recordTn($record);
+		}
+
+		$sql = "DELETE FROM " . self::cacheTable($sync_type) . " ";
+		$sql .= "WHERE tn NOT IN (" . implode(', ', $placeholders) . ") ";
+		if ($sync_type === 'numbers') {
+			$sql .= "AND trunk_group = :trunk_group ";
+			$parameters['trunk_group'] = $trunk_group;
+		}
+		$this->database->execute($sql, $parameters);
+	}
+
+	private function upsertNumber(array $number, $trunk_group) {
+		$tn = self::recordTn($number);
+
+		$status = $number['Status'] ?? $number['status'] ?? '';
+		$lidb = $number['Lidb'] ?? $number['lidb'] ?? '';
+		$reference_id = $number['ReferenceID'] ?? $number['referenceID'] ?? '';
+		$portout_pin = $number['Portout Pin'] ?? $number['portoutPin'] ?? '';
+
+		$activation_date = '';
+		$rate_center = '';
+		$tier = '';
+		if (isset($number['TN Details']) && is_array($number['TN Details'])) {
+			$tn_details = $number['TN Details'];
+			$activation_date = self::normalizeActivationDate(
+				$tn_details['Activation Date'] ?? $tn_details['activation_date'] ?? '',
+				$tn
+			);
+			$rate_center = $tn_details['Rate Center'] ?? $tn_details['rate_center'] ?? '';
+			$tier = $tn_details['Tier'] ?? $tn_details['tier'] ?? '';
+		}
+
+		$sms = false;
+		$mms = false;
+		if (isset($number['Messaging']) && is_array($number['Messaging'])) {
+			$messaging = $number['Messaging'];
+			if (isset($messaging['Sms'])) {
+				$sms_val = $messaging['Sms'];
+				$sms = ($sms_val === true || $sms_val === 'true' || $sms_val === 1 || $sms_val === '1');
+			}
+			if (isset($messaging['Mms'])) {
+				$mms_val = $messaging['Mms'];
+				$mms = ($mms_val === true || $mms_val === 'true' || $mms_val === 1 || $mms_val === '1');
+			}
+		}
+
+		$check_sql = "SELECT bulkvs_numbers_cache_uuid FROM v_bulkvs_numbers_cache WHERE tn = :tn";
+		$check_params = ['tn' => $tn];
+		if (!empty($trunk_group)) {
+			$check_sql .= " AND trunk_group = :trunk_group";
+			$check_params['trunk_group'] = $trunk_group;
+		}
+		$existing = $this->database->select($check_sql, $check_params, 'row');
+
+		if (empty($existing)) {
+			$sql = "INSERT INTO v_bulkvs_numbers_cache ";
+			$sql .= "(bulkvs_numbers_cache_uuid, tn, status, activation_date, rate_center, tier, lidb, reference_id, ";
+			$sql .= "sms, mms, portout_pin, trunk_group, data_json, last_updated, created) ";
+			$sql .= "VALUES ";
+			$sql .= "(gen_random_uuid(), :tn, :status, :activation_date, :rate_center, :tier, :lidb, :reference_id, ";
+			$sql .= "CAST(:sms AS boolean), CAST(:mms AS boolean), :portout_pin, :trunk_group, :data_json::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ";
+		} else {
+			$sql = "UPDATE v_bulkvs_numbers_cache SET ";
+			$sql .= "status = :status, ";
+			$sql .= "activation_date = :activation_date, ";
+			$sql .= "rate_center = :rate_center, ";
+			$sql .= "tier = :tier, ";
+			$sql .= "lidb = :lidb, ";
+			$sql .= "reference_id = :reference_id, ";
+			$sql .= "sms = CAST(:sms AS boolean), ";
+			$sql .= "mms = CAST(:mms AS boolean), ";
+			$sql .= "portout_pin = :portout_pin, ";
+			$sql .= "trunk_group = :trunk_group, ";
+			$sql .= "data_json = :data_json::jsonb, ";
+			$sql .= "last_updated = CURRENT_TIMESTAMP ";
+			$sql .= "WHERE tn = :tn";
+			if (!empty($trunk_group)) {
+				$sql .= " AND trunk_group = :trunk_group";
+			}
+		}
+
+		$parameters = [
+			'tn' => $tn,
+			'status' => $status,
+			'activation_date' => !empty($activation_date) ? $activation_date : null,
+			'rate_center' => $rate_center,
+			'tier' => $tier,
+			'lidb' => $lidb,
+			'reference_id' => $reference_id,
+			'sms' => $sms ? 1 : 0,
+			'mms' => $mms ? 1 : 0,
+			'portout_pin' => $portout_pin,
+			'trunk_group' => $trunk_group,
+			'data_json' => json_encode($number)
+		];
+
+		try {
+			$this->database->execute($sql, $parameters);
+		} catch (Exception $e) {
+			error_log("BulkVS cache insert error for TN $tn: " . $e->getMessage());
+		}
+	}
+
+	private function upsertE911(array $record) {
+		$tn = self::recordTn($record);
+
+		$caller_name = $record['Caller Name'] ?? $record['callerName'] ?? '';
+		$address_line1 = $record['Address Line 1'] ?? $record['addressLine1'] ?? '';
+		$address_line2 = $record['Address Line 2'] ?? $record['addressLine2'] ?? '';
+		$city = $record['City'] ?? $record['city'] ?? '';
+		$state = $record['State'] ?? $record['state'] ?? '';
+		$zip = $record['Zip'] ?? $record['zip'] ?? '';
+		$address_id = $record['AddressID'] ?? $record['addressID'] ?? '';
+
+		$sms_array = [];
+		if (isset($record['Sms']) && is_array($record['Sms'])) {
+			$sms_array = $record['Sms'];
+		}
+
+		$sql_check = "SELECT bulkvs_e911_cache_uuid FROM v_bulkvs_e911_cache WHERE tn = :tn ";
+		$existing = $this->database->select($sql_check, ['tn' => $tn], 'row');
+
+		if (empty($existing)) {
+			$sql = "INSERT INTO v_bulkvs_e911_cache ";
+			$sql .= "(bulkvs_e911_cache_uuid, tn, caller_name, address_line1, address_line2, city, state, zip, ";
+			$sql .= "address_id, sms, data_json, last_updated, created) ";
+			$sql .= "VALUES ";
+			$sql .= "(gen_random_uuid(), :tn, :caller_name, :address_line1, :address_line2, :city, :state, :zip, ";
+			$sql .= ":address_id, :sms::jsonb, :data_json::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ";
+		} else {
+			$sql = "UPDATE v_bulkvs_e911_cache SET ";
+			$sql .= "caller_name = :caller_name, ";
+			$sql .= "address_line1 = :address_line1, ";
+			$sql .= "address_line2 = :address_line2, ";
+			$sql .= "city = :city, ";
+			$sql .= "state = :state, ";
+			$sql .= "zip = :zip, ";
+			$sql .= "address_id = :address_id, ";
+			$sql .= "sms = :sms::jsonb, ";
+			$sql .= "data_json = :data_json::jsonb, ";
+			$sql .= "last_updated = CURRENT_TIMESTAMP ";
+			$sql .= "WHERE tn = :tn ";
+		}
+
+		$parameters = [
+			'tn' => $tn,
+			'caller_name' => $caller_name,
+			'address_line1' => $address_line1,
+			'address_line2' => $address_line2,
+			'city' => $city,
+			'state' => $state,
+			'zip' => $zip,
+			'address_id' => $address_id,
+			'sms' => json_encode($sms_array),
+			'data_json' => json_encode($record)
+		];
+
+		try {
+			$this->database->execute($sql, $parameters);
+		} catch (Exception $e) {
+			error_log("BulkVS E911 cache insert error for TN $tn: " . $e->getMessage());
+		}
 	}
 
 	/**
@@ -769,13 +564,10 @@ class bulkvs_cache {
 		if (empty($existing)) {
 			$sql = "INSERT INTO v_bulkvs_sync_status ";
 			$sql .= "(bulkvs_sync_status_uuid, sync_type, last_sync_start, last_sync_end, last_record_count, ";
-			$sql .= "current_record_count, sync_in_progress, sync_status, error_message) ";
+			$sql .= "current_record_count, sync_status, error_message) ";
 			$sql .= "VALUES ";
 			$sql .= "(gen_random_uuid(), :sync_type, :last_sync_start, :last_sync_end, :last_record_count, ";
-			$sql .= ":current_record_count, CAST(:sync_in_progress AS boolean), :sync_status, :error_message) ";
-			
-			$sync_in_progress_val = isset($data['sync_in_progress']) ? $data['sync_in_progress'] : false;
-			$sync_in_progress_int = ($sync_in_progress_val === true || $sync_in_progress_val === 'true' || $sync_in_progress_val === 1 || $sync_in_progress_val === '1') ? 1 : 0;
+			$sql .= ":current_record_count, :sync_status, :error_message) ";
 			
 			$parameters = [
 				'sync_type' => $sync_type,
@@ -783,7 +575,6 @@ class bulkvs_cache {
 				'last_sync_end' => $data['last_sync_end'] ?? null,
 				'last_record_count' => $data['last_record_count'] ?? 0,
 				'current_record_count' => $data['current_record_count'] ?? 0,
-				'sync_in_progress' => $sync_in_progress_int,
 				'sync_status' => $data['sync_status'] ?? 'success',
 				'error_message' => $data['error_message'] ?? null
 			];
@@ -814,11 +605,6 @@ class bulkvs_cache {
 			if (isset($data['current_record_count'])) {
 				$updates[] = "current_record_count = :current_record_count";
 				$parameters['current_record_count'] = $data['current_record_count'];
-			}
-			if (isset($data['sync_in_progress'])) {
-				$updates[] = "sync_in_progress = CAST(:sync_in_progress AS boolean)";
-				$sync_in_progress_val = $data['sync_in_progress'];
-				$parameters['sync_in_progress'] = ($sync_in_progress_val === true || $sync_in_progress_val === 'true' || $sync_in_progress_val === 1 || $sync_in_progress_val === '1') ? 1 : 0;
 			}
 			if (isset($data['sync_status'])) {
 				$updates[] = "sync_status = :sync_status";
@@ -892,17 +678,54 @@ class bulkvs_cache {
 		$this->database->execute($sql, ['tn' => $tn]);
 	}
 
+}
+
+final class bulkvs_sync_result {
+
+	const COMPLETED = 'completed';
+	const CANCELLED = 'cancelled';
+	const BUSY = 'busy';
+	const FAILED = 'failed';
+
+	private $status;
+	private $net_change;
+	private $total;
+	private $message;
+
+	private function __construct(string $status, int $net_change, int $total, ?string $message) {
+		$this->status = $status;
+		$this->net_change = $net_change;
+		$this->total = $total;
+		$this->message = $message;
+	}
+
+	public static function completed(int $net_change, int $total): self {
+		return new self(self::COMPLETED, $net_change, $total, null);
+	}
+
+	public static function cancelled(): self {
+		return new self(self::CANCELLED, 0, 0, null);
+	}
+
+	public static function busy(): self {
+		return new self(self::BUSY, 0, 0, null);
+	}
+
+	public static function failed(string $message): self {
+		return new self(self::FAILED, 0, 0, $message);
+	}
+
 	/**
-	 * Reset last_record_count to current_record_count (after refresh)
-	 * @param string $sync_type 'numbers' or 'e911'
+	 * @param bool $refresh_available From bulkvs_cache::refreshAvailable(), not from this result's counts
 	 */
-	public function resetLastRecordCount($sync_type) {
-		$sync_status = $this->getSyncStatus($sync_type);
-		if ($sync_status && isset($sync_status['current_record_count'])) {
-			$this->updateSyncStatus($sync_type, [
-				'last_record_count' => $sync_status['current_record_count']
-			]);
-		}
+	public function toArray(bool $refresh_available): array {
+		return [
+			'status' => $this->status,
+			'refresh_available' => $refresh_available,
+			'message' => $this->message,
+			'net_change' => $this->net_change,
+			'total' => $this->total
+		];
 	}
 }
 

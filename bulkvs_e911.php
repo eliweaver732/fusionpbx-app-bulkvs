@@ -123,40 +123,12 @@
 		$show_domain_only = true;
 	}
 
-//get E911 records from cache (fallback to API if cache is empty)
-	$e911_records = [];
+	$e911_records = $cache->getE911Records();
+	$cache_empty = empty($e911_records);
 	$error_message = '';
 	$e911_map = [];
 	
 	try {
-		// Try to load from cache first
-		$e911_records = $cache->getE911Records();
-		error_log("BulkVS E911: Loaded " . count($e911_records) . " records from cache");
-		
-		// If cache is empty, fetch from API directly
-		if (empty($e911_records)) {
-			error_log("BulkVS E911: Cache is empty, fetching from API...");
-			require_once "resources/classes/bulkvs_api.php";
-			$bulkvs_api = new bulkvs_api($settings);
-			$api_response = $bulkvs_api->getE911Records();
-			
-			// Handle API response - it may be an array of records or an object with a data property
-			if (isset($api_response['data']) && is_array($api_response['data'])) {
-				$e911_records = $api_response['data'];
-			} elseif (is_array($api_response)) {
-				$e911_records = $api_response;
-			}
-			error_log("BulkVS E911: Loaded " . count($e911_records) . " records from API");
-			
-			// Try to sync to cache in background (don't block if it fails)
-			try {
-				$sync_result = $cache->syncE911();
-				error_log("BulkVS E911: Background sync completed");
-			} catch (Exception $sync_error) {
-				error_log("BulkVS E911 background sync failed (non-blocking): " . $sync_error->getMessage());
-			}
-		}
-		
 		// Create a mapping of TN to E911 record
 		foreach ($e911_records as $e911_record) {
 			$e911_tn = $e911_record['TN'] ?? $e911_record['tn'] ?? '';
@@ -280,12 +252,7 @@
 	}
 
 //check if new records are available
-	$has_new_e911 = false;
-	try {
-		$has_new_e911 = $cache->hasNewRecords('e911');
-	} catch (Exception $e) {
-		// Ignore errors checking for new records
-	}
+	$refresh_available = $cache->refreshAvailable('e911');
 
 //get filter parameter
 	$filter = $_GET['filter'] ?? $_POST['filter'] ?? '';
@@ -557,9 +524,9 @@
 	echo "</div>\n";
 	echo "	<div class='actions'>\n";
 	// Refresh button (hidden by default, shown when new records available)
-	$refresh_button_style = $has_new_e911 ? '' : 'display: none;';
+	$refresh_button_style = $refresh_available ? '' : 'display: none;';
 	echo "<span id='refresh_button_container' style='".$refresh_button_style."'>";
-	echo button::create(['type'=>'button','label'=>$text['button-refresh'],'icon'=>'refresh','id'=>'btn_refresh','onclick'=>"refreshPage();"]);
+	echo button::create(['type'=>'button','label'=>$text['button-refresh'],'icon'=>'refresh','id'=>'btn_refresh','onclick'=>"bulkvs_sync.refresh('e911');"]);
 	echo "</span>\n";
 	echo button::create(['type'=>'button','label'=>$text['button-back'],'icon'=>'arrow-left','link'=>'bulkvs_numbers.php']);
 	if (permission_exists('bulkvs_edit')) {
@@ -616,6 +583,11 @@
 
 	if (!empty($error_message)) {
 		echo "<div class='alert alert-warning'>".escape($error_message)."</div>\n";
+		echo "<br />\n";
+	}
+
+	if ($cache_empty) {
+		echo "<div id='bulkvs_sync_notice'>".escape($text['message-syncing'])."</div>\n";
 		echo "<br />\n";
 	}
 
@@ -767,45 +739,12 @@
 
 	echo "<br />\n";
 
-//add JavaScript for background sync
-	echo "<script type='text/javascript'>\n";
-	echo "	// Function to refresh page and reset sync status\n";
-	echo "	function refreshPage() {\n";
-	echo "		// Reset last_record_count before reloading\n";
-	echo "		var xhr = new XMLHttpRequest();\n";
-	echo "		xhr.open('POST', 'bulkvs_sync.php', true);\n";
-	echo "		xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');\n";
-	echo "		xhr.send('type=e911&reset=1');\n";
-	echo "		// Reload page immediately (don't wait for reset)\n";
-	echo "		window.location.reload();\n";
-	echo "	}\n";
-	echo "	\n";
-	echo "	// Trigger background sync on page load\n";
-	echo "	(function() {\n";
-	echo "		var syncType = 'e911';\n";
-	echo "		var xhr = new XMLHttpRequest();\n";
-	echo "		xhr.open('GET', 'bulkvs_sync.php?type=' + syncType, true);\n";
-	echo "		xhr.onreadystatechange = function() {\n";
-	echo "			if (xhr.readyState === 4) {\n";
-	echo "				if (xhr.status === 200) {\n";
-	echo "					try {\n";
-	echo "						var response = JSON.parse(xhr.responseText);\n";
-	echo "						if (response.success && response.new_records > 0) {\n";
-	echo "							// Show refresh button\n";
-	echo "							var refreshBtn = document.getElementById('refresh_button_container');\n";
-	echo "							if (refreshBtn) {\n";
-	echo "								refreshBtn.style.display = '';\n";
-	echo "							}\n";
-	echo "						}\n";
-	echo "					} catch (e) {\n";
-	echo "						// Ignore JSON parse errors\n";
-	echo "					}\n";
-	echo "				}\n";
-	echo "			}\n";
-	echo "		};\n";
-	echo "		xhr.send();\n";
-	echo "	})();\n";
-	echo "</script>\n";
+	echo "<script src='resources/javascript/bulkvs_sync.js'></script>\n";
+	echo "<script>bulkvs_sync.start(".json_encode([
+		'types' => ['e911'],
+		'refresh_type' => 'e911',
+		'reload_when_done' => $cache_empty,
+	]).");</script>\n";
 
 //include the footer
 	require_once "resources/footer.php";

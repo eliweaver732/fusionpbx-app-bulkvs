@@ -28,81 +28,66 @@
 	require_once dirname(__DIR__, 2) . "/resources/require.php";
 	require_once "resources/check_auth.php";
 
-//check permissions
-	if (!permission_exists('bulkvs_view')) {
-		header('Content-Type: application/json');
-		echo json_encode(['success' => false, 'message' => 'Access denied']);
-		exit;
-	}
-
-//set content type to JSON
 	header('Content-Type: application/json');
 
-//initialize the settings object
-	$settings = new settings(['database' => $database, 'domain_uuid' => $domain_uuid]);
+//check permissions
+	if (!permission_exists('bulkvs_view')) {
+		echo json_encode(['status' => 'failed', 'message' => 'Access denied']);
+		exit;
+	}
 
 //get sync type from request
 	$sync_type = $_GET['type'] ?? $_POST['type'] ?? '';
 	$reset = isset($_GET['reset']) || isset($_POST['reset']);
-	$force_reset = isset($_GET['force_reset']) || isset($_POST['force_reset']);
-	
-	if (empty($sync_type) || !in_array($sync_type, ['numbers', 'e911'])) {
-		echo json_encode(['success' => false, 'message' => 'Invalid sync type']);
-		exit;
-	}
 
 //load cache class
 	require_once "resources/classes/bulkvs_cache.php";
+
+	if (!in_array($sync_type, bulkvs_cache::SYNC_TYPES, true)) {
+		echo json_encode(['status' => 'failed', 'message' => 'Invalid sync type']);
+		exit;
+	}
+
+	$settings = new settings(['database' => $database, 'domain_uuid' => $domain_uuid]);
 	$cache = new bulkvs_cache($database, $settings);
 
-//handle force reset request (reset sync_in_progress flag)
-	if ($force_reset) {
-		try {
-			// Initialize database if not already set
-			if (!isset($database) || $database === null) {
-				$database = new database;
-			}
-			
-			$sql = "UPDATE v_bulkvs_sync_status SET sync_in_progress = false WHERE sync_type = :sync_type";
-			$database->execute($sql, ['sync_type' => $sync_type]);
-			echo json_encode(['success' => true, 'message' => 'Force reset successful']);
-		} catch (Exception $e) {
-			echo json_encode(['success' => false, 'message' => $e->getMessage()]);
-		}
-		exit;
-	}
+//release the session lock so other pages load during the sync; no message::add, token::create, or session_start below this line
+	session_write_close();
 
-//handle reset request (reset last_record_count to current_record_count)
 	if ($reset) {
-		try {
-			$cache->resetLastRecordCount($sync_type);
-			echo json_encode(['success' => true, 'message' => 'Reset successful']);
-		} catch (Exception $e) {
-			echo json_encode(['success' => false, 'message' => $e->getMessage()]);
-		}
+		$cache->acknowledgeRefresh($sync_type);
+		echo json_encode(['status' => 'completed']);
 		exit;
 	}
 
-//perform sync based on type
-	try {
-		if ($sync_type === 'numbers') {
-			$trunk_group = $settings->get('bulkvs', 'trunk_group', '');
-			$result = $cache->syncNumbers($trunk_group);
-		} else {
-			$result = $cache->syncE911();
-		}
-		
-		// Return result as JSON
-		echo json_encode($result);
-		
-	} catch (Exception $e) {
-		echo json_encode([
-			'success' => false,
-			'message' => $e->getMessage(),
-			'new_records' => 0,
-			'total_records' => 0
-		]);
+	set_time_limit(0);
+	$result = $cache->sync($sync_type, bulkvs_client_still_connected());
+	echo json_encode($result->toArray($cache->refreshAvailable($sync_type)));
+
+/**
+ * PHP only notices a dropped client when it writes, so each call (at most every 2 seconds)
+ * writes a newline, which is valid leading whitespace for the final JSON body.
+ * ignore_user_abort keeps PHP from aborting the script on disconnect.
+ * If a proxy hides the disconnect, the sync finishes normally.
+ * @return callable fn(): bool
+ */
+function bulkvs_client_still_connected(): callable {
+	ignore_user_abort(true);
+	header('X-Accel-Buffering: no');
+	while (ob_get_level() > 0) {
+		ob_end_flush();
 	}
+
+	$last_write = 0;
+	return function () use (&$last_write) {
+		if (microtime(true) - $last_write >= 2) {
+			$last_write = microtime(true);
+			echo "\n";
+			flush();
+		}
+		return connection_aborted() === 0;
+	};
+}
 
 ?>
 

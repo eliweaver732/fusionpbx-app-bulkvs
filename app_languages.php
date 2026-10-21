@@ -203,6 +203,9 @@ $text['label-refresh-available']['en-gb'] = "New records available - click to re
 $text['message-sync-in-progress']['en-us'] = "Syncing data in background...";
 $text['message-sync-in-progress']['en-gb'] = "Syncing data in background...";
 
+$text['message-syncing']['en-us'] = "Syncing from BulkVS...";
+$text['message-syncing']['en-gb'] = "Syncing from BulkVS...";
+
 $text['message-sync-complete']['en-us'] = "Sync complete";
 $text['message-sync-complete']['en-gb'] = "Sync complete";
 
