@@ -332,7 +332,6 @@
 	require_once "resources/classes/bulkvs_cache.php";
 	$cache = new bulkvs_cache($database, $settings);
 
-//read numbers and e911 strictly from cache; bulkvs_sync.js fills empty caches after paint
 	$numbers = $cache->getNumbers($trunk_group);
 	$e911_map = array_column($cache->getE911Records(), null, 'TN');
 	$sync_types = empty($e911_map) ? ['numbers', 'e911'] : ['numbers'];
@@ -1002,7 +1001,6 @@
 
 	echo "<br />\n";
 
-//start background sync after paint
 	echo "<script src='resources/javascript/bulkvs_sync.js'></script>\n";
 	echo "<script>bulkvs_sync.start(".json_encode([
 		'types' => $sync_types,

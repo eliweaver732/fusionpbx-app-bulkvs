@@ -28,7 +28,6 @@
 	require_once dirname(__DIR__, 2) . "/resources/require.php";
 	require_once "resources/check_auth.php";
 
-//set content type to JSON
 	header('Content-Type: application/json');
 
 //check permissions
@@ -55,24 +54,21 @@
 //release the session lock so other pages load during the sync; no message::add, token::create, or session_start below this line
 	session_write_close();
 
-//handle reset request (acknowledge the refresh button)
 	if ($reset) {
 		$cache->acknowledgeRefresh($sync_type);
 		echo json_encode(['status' => 'completed']);
 		exit;
 	}
 
-//perform sync
 	set_time_limit(0);
 	$result = $cache->sync($sync_type, bulkvs_client_still_connected());
 	echo json_encode($result->toArray($cache->refreshAvailable($sync_type)));
 
 /**
- * Returns a probe that reports whether the browser still waits for this response.
  * PHP only notices a dropped client when it writes, so each call (at most every 2 seconds)
  * writes a newline, which is valid leading whitespace for the final JSON body.
- * ignore_user_abort keeps PHP from killing the script mid-row; the sync stops at the next
- * row boundary instead. If a proxy hides the disconnect, the sync finishes normally.
+ * ignore_user_abort keeps PHP from aborting the script on disconnect.
+ * If a proxy hides the disconnect, the sync finishes normally.
  * @return callable fn(): bool
  */
 function bulkvs_client_still_connected(): callable {

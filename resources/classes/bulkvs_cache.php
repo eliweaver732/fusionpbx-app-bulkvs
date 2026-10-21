@@ -32,12 +32,14 @@ class bulkvs_cache {
 
 	const SYNC_TYPES = ['numbers', 'e911'];
 
-	/**
-	 * First key of the two-int advisory lock. The second key is the index into SYNC_TYPES.
-	 */
 	const ADVISORY_LOCK_NAMESPACE = 0x42564B53;
 
 	const CANCEL_CHECK_EVERY_ROWS = 50;
+
+	const REFRESH_RULES = [
+		'numbers' => 'any_change',
+		'e911' => 'growth_only',
+	];
 
 	/**
 	 * Database object
@@ -190,12 +192,7 @@ class bulkvs_cache {
 	}
 
 	/**
-	 * Sync one cache type from the BulkVS API. This is the only writer of the cache.
-	 *
-	 * At most one sync per type runs at a time. The advisory lock belongs to the
-	 * non-persistent database connection, so a crashed or killed request releases it.
-	 * A cancelled sync keeps the rows it already upserted but skips the stale-row delete
-	 * and the record counts, so it never removes data or toggles the refresh button.
+	 * The advisory lock belongs to the non-persistent database connection, so a crashed or killed request releases it.
 	 * @param string $sync_type One of SYNC_TYPES
 	 * @param callable|null $still_wanted fn(): bool, checked between rows. Null never cancels.
 	 * @return bulkvs_sync_result
@@ -249,8 +246,6 @@ class bulkvs_cache {
 	}
 
 	/**
-	 * True when the last completed sync changed what the page shows and nobody has acknowledged it.
-	 * Numbers count deletions as changes; E911 counts only additions.
 	 * @param string $sync_type One of SYNC_TYPES
 	 * @return bool
 	 */
@@ -262,12 +257,17 @@ class bulkvs_cache {
 
 		$current_count = (int)$sync_status['current_record_count'];
 		$last_count = (int)$sync_status['last_record_count'];
-
-		return $sync_type === 'numbers' ? $current_count !== $last_count : $current_count > $last_count;
+		$rule = self::REFRESH_RULES[$sync_type] ?? null;
+		if ($rule === 'any_change') {
+			return $current_count !== $last_count;
+		}
+		if ($rule === 'growth_only') {
+			return $current_count > $last_count;
+		}
+		return false;
 	}
 
 	/**
-	 * Clear refreshAvailable() after the user reloads
 	 * @param string $sync_type One of SYNC_TYPES
 	 */
 	public function acknowledgeRefresh(string $sync_type): void {
@@ -295,6 +295,20 @@ class bulkvs_cache {
 
 	private static function recordTn(array $record): string {
 		return (string)($record['TN'] ?? $record['tn'] ?? $record['telephoneNumber'] ?? '');
+	}
+
+	private static function normalizeActivationDate($raw, string $tn): string {
+		if ($raw === null || $raw === '') {
+			return '';
+		}
+		$normalized = preg_replace('/(\d{4}-\d{2}-\d{2})\s+(\d{1,2})\s+(\d{2}:\d{2})/', '$1 $2:$3', $raw);
+		$normalized = preg_replace('/(\d{4}-\d{2}-\d{2})\s+(\d{1,2})\s+(\d{2})\s+(\d{2})/', '$1 $2:$3:$4', $normalized);
+		try {
+			return (new DateTime($normalized))->format('Y-m-d H:i:s');
+		} catch (Exception $date_e) {
+			error_log("BulkVS: Invalid activation_date format for TN $tn: '$raw'");
+			return '';
+		}
 	}
 
 	private function countRows(string $sync_type, $trunk_group): int {
@@ -325,9 +339,6 @@ class bulkvs_cache {
 		}));
 	}
 
-	/**
-	 * @return bool False if $still_wanted said stop
-	 */
 	private function upsertRows(string $sync_type, array $records, $trunk_group, callable $still_wanted): bool {
 		foreach ($records as $index => $record) {
 			if ($index % self::CANCEL_CHECK_EVERY_ROWS === 0 && !$still_wanted()) {
@@ -342,12 +353,18 @@ class bulkvs_cache {
 		return $still_wanted();
 	}
 
-	/**
-	 * Remove cached rows the API no longer returns. Skipped when the API returned
-	 * nothing, so an empty response cannot wipe the cache. Numbers are pruned only within a trunk group.
-	 */
+	private function canPruneStaleRows(string $sync_type, array $records, $trunk_group): bool {
+		if (empty($records)) {
+			return false;
+		}
+		if ($sync_type === 'numbers' && empty($trunk_group)) {
+			return false;
+		}
+		return true;
+	}
+
 	private function deleteMissing(string $sync_type, array $records, $trunk_group) {
-		if (empty($records) || ($sync_type === 'numbers' && empty($trunk_group))) {
+		if (!$this->canPruneStaleRows($sync_type, $records, $trunk_group)) {
 			return;
 		}
 
@@ -370,7 +387,6 @@ class bulkvs_cache {
 	private function upsertNumber(array $number, $trunk_group) {
 		$tn = self::recordTn($number);
 
-		// Extract fields
 		$status = $number['Status'] ?? $number['status'] ?? '';
 		$lidb = $number['Lidb'] ?? $number['lidb'] ?? '';
 		$reference_id = $number['ReferenceID'] ?? $number['referenceID'] ?? '';
@@ -381,22 +397,10 @@ class bulkvs_cache {
 		$tier = '';
 		if (isset($number['TN Details']) && is_array($number['TN Details'])) {
 			$tn_details = $number['TN Details'];
-			$activation_date_raw = $tn_details['Activation Date'] ?? $tn_details['activation_date'] ?? '';
-
-			// Normalize activation_date - fix malformed dates
-			if (!empty($activation_date_raw)) {
-				$activation_date = preg_replace('/(\d{4}-\d{2}-\d{2})\s+(\d{1,2})\s+(\d{2}:\d{2})/', '$1 $2:$3', $activation_date_raw);
-				$activation_date = preg_replace('/(\d{4}-\d{2}-\d{2})\s+(\d{1,2})\s+(\d{2})\s+(\d{2})/', '$1 $2:$3:$4', $activation_date);
-
-				try {
-					$date_obj = new DateTime($activation_date);
-					$activation_date = $date_obj->format('Y-m-d H:i:s');
-				} catch (Exception $date_e) {
-					error_log("BulkVS: Invalid activation_date format for TN $tn: '$activation_date_raw'");
-					$activation_date = '';
-				}
-			}
-
+			$activation_date = self::normalizeActivationDate(
+				$tn_details['Activation Date'] ?? $tn_details['activation_date'] ?? '',
+				$tn
+			);
 			$rate_center = $tn_details['Rate Center'] ?? $tn_details['rate_center'] ?? '';
 			$tier = $tn_details['Tier'] ?? $tn_details['tier'] ?? '';
 		}
@@ -415,7 +419,6 @@ class bulkvs_cache {
 			}
 		}
 
-		// Check if record exists
 		$check_sql = "SELECT bulkvs_numbers_cache_uuid FROM v_bulkvs_numbers_cache WHERE tn = :tn";
 		$check_params = ['tn' => $tn];
 		if (!empty($trunk_group)) {
@@ -677,10 +680,6 @@ class bulkvs_cache {
 
 }
 
-/**
- * Result of one bulkvs_cache::sync() call. The named constructors keep invalid
- * combinations, such as a cancelled result with counts, from being built.
- */
 final class bulkvs_sync_result {
 
 	const COMPLETED = 'completed';
@@ -717,9 +716,7 @@ final class bulkvs_sync_result {
 	}
 
 	/**
-	 * Wire shape for bulkvs_sync.php
 	 * @param bool $refresh_available From bulkvs_cache::refreshAvailable(), not from this result's counts
-	 * @return array
 	 */
 	public function toArray(bool $refresh_available): array {
 		return [

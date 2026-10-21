@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""Static check that BulkVS sync never holds the PHP session lock during page requests.
-
-Run from anywhere: python3 scripts/verify_nonblocking_sync.py
-Exits 1 if any check fails.
-"""
 import re
 import sys
 from pathlib import Path

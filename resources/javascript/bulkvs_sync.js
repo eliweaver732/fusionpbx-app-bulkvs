@@ -2,7 +2,6 @@ var bulkvs_sync = (function () {
 	var controller = new AbortController();
 	var busy_retry_delays_ms = [5000, 20000];
 
-	// Only on leaving the page. A sync in a hidden tab is still wanted.
 	window.addEventListener('pagehide', function () {
 		controller.abort();
 	});

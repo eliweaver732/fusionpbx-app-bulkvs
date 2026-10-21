@@ -123,7 +123,6 @@
 		$show_domain_only = true;
 	}
 
-//get E911 records strictly from cache; bulkvs_sync.js fills an empty cache after paint
 	$e911_records = $cache->getE911Records();
 	$cache_empty = empty($e911_records);
 	$error_message = '';
@@ -740,7 +739,6 @@
 
 	echo "<br />\n";
 
-//start background sync after paint
 	echo "<script src='resources/javascript/bulkvs_sync.js'></script>\n";
 	echo "<script>bulkvs_sync.start(".json_encode([
 		'types' => ['e911'],
