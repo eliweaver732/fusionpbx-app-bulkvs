@@ -60,7 +60,7 @@ The app includes a sophisticated caching system that stores BulkVS numbers and E
 ### How It Works
 
 1. **Initial Load**: When you first open the Numbers or E911 page, data is loaded instantly from the cache
-2. **Background Sync**: After the page loads, a background sync automatically updates the cache with the latest data from the BulkVS API
+2. **Background Sync**: After the page loads, `resources/javascript/bulkvs_sync.js` calls `bulkvs_sync.php`, which updates the cache from the BulkVS API. The sync request releases your PHP session first, so other FusionPBX pages keep loading while it runs. Leaving the page stops the sync at the next batch of rows
 3. **Change Detection**: If new records are added or existing records are deleted, a refresh button appears at the top of the page
 4. **Cache Synchronization**: The cache is kept in sync with the API - new numbers are added, deleted/disconnected numbers are removed
 
@@ -70,7 +70,7 @@ The caching system creates three tables in your PostgreSQL database:
 
 - **v_bulkvs_numbers_cache**: Stores cached number data
 - **v_bulkvs_e911_cache**: Stores cached E911 record data
-- **v_bulkvs_sync_status**: Tracks sync status and prevents concurrent syncs
+- **v_bulkvs_sync_status**: Tracks the last sync result and record counts for the refresh button
 
 These tables are automatically created when you run the FusionPBX upgrade after installing/updating the app.
 
@@ -87,12 +87,16 @@ Clicking the refresh button reloads the page with the latest cached data and res
 
 The cache is automatically managed, but you can manually trigger a sync by:
 - Reloading the page (triggers background sync)
-- Using the AJAX sync endpoint: `bulkvs_sync.php?type=numbers` or `bulkvs_sync.php?type=e911`
+- Calling the sync endpoint: `GET bulkvs_sync.php?type=numbers` or `GET bulkvs_sync.php?type=e911`
+
+The endpoint returns `{"status": "completed|cancelled|busy|failed", "refresh_available": bool, "message": string|null, "net_change": int, "total": int}`. `POST type=numbers&reset=1` clears the refresh button for that type.
 
 ### Cache Behavior
 
-- **Empty Cache**: If the cache is empty, data is fetched directly from the API for immediate display, then a background sync populates the cache
-- **Stale Sync Detection**: If a sync appears stuck (running for more than 2 minutes), it's automatically reset
+- **Empty Cache**: Pages never call the BulkVS API themselves. On a first visit the page shows "Syncing from BulkVS..." and reloads once the background sync has filled the cache
+- **One Sync Per Type**: A Postgres advisory lock allows one numbers sync and one E911 sync at a time per database server. A second request gets `busy`, and the page retries after 5 and then 20 seconds. The lock is released when the request ends for any reason, so a sync cannot get stuck
+- **Cancelled Sync**: A sync stopped by navigation keeps the rows it already wrote and skips removing numbers that BulkVS no longer returns. The next completed sync removes them
+- **Editing**: Saving a number or E911 record updates BulkVS and returns to the list without re-syncing. The list page's background sync updates the cache, and the edit shows after the next reload
 - **Exact Match**: The cache always matches the API exactly - deleted numbers are automatically removed from the cache
 - **Trunk Group Filtering**: Numbers cache respects trunk group filtering - only numbers for your configured trunk group are cached
 
@@ -245,9 +249,11 @@ bulkvs/
 ├── bulkvs_search.php           # Search and purchase page
 ├── bulkvs_sync.php             # AJAX endpoint for background synchronization
 └── resources/
-    └── classes/
-        ├── bulkvs_api.php      # BulkVS API client class
-        └── bulkvs_cache.php    # Database caching and synchronization class
+    ├── classes/
+    │   ├── bulkvs_api.php      # BulkVS API client class
+    │   └── bulkvs_cache.php    # Database caching and synchronization class
+    └── javascript/
+        └── bulkvs_sync.js      # Starts background sync and shows the refresh button
 ```
 
 ## API Client
@@ -272,12 +278,10 @@ The `bulkvs_cache` class provides methods for managing cached data:
 
 - `getNumbers($trunk_group)`: Retrieve numbers from cache filtered by trunk group
 - `getE911Records()`: Retrieve E911 records from cache
-- `syncNumbers($trunk_group)`: Synchronize numbers from API to cache (background)
-- `syncE911()`: Synchronize E911 records from API to cache (background)
-- `hasChanges($sync_type)`: Check if records have changed (added or deleted)
-- `hasNewRecords($sync_type)`: Check if new records exist (legacy method)
+- `sync($sync_type, $still_wanted)`: Sync `numbers` or `e911` from the API to the cache. Returns `busy` if another sync of that type holds the lock. `$still_wanted` is an optional `fn(): bool` checked between rows to cancel
+- `refreshAvailable($sync_type)`: Whether the last sync changed the record count since the user last refreshed
+- `acknowledgeRefresh($sync_type)`: Clear `refreshAvailable()` after the user refreshes
 - `getSyncStatus($sync_type)`: Get sync status for numbers or E911
-- `resetLastRecordCount($sync_type)`: Reset change detection after refresh
 - `clearCache($sync_type)`: Clear cache for a sync type
 - `updateNumber($tn, $number_data)`: Update a single number in cache
 - `deleteNumber($tn)`: Delete a number from cache
@@ -322,7 +326,8 @@ https://portal.bulkvs.com/api/v1.0/openapi
 ### Cache Issues
 
 - **Cache Not Updating**: If the cache appears stale, reload the page to trigger a background sync
-- **Sync Stuck**: If sync appears stuck, you can force reset it by accessing `bulkvs_sync.php?type=numbers&force_reset=1` or `bulkvs_sync.php?type=e911&force_reset=1`
+- **Sync Never Finishes**: A very large account can outlast PHP-FPM's `request_terminate_timeout`. The endpoint lifts PHP's own time limit, but FPM can still kill the request. Raise that timeout for the FusionPBX pool. A killed sync releases its lock and keeps the rows it wrote
+- **Sync Not Cancelling On Navigation**: The endpoint detects a closed browser connection by writing a newline every 2 seconds. If nginx buffers FastCGI output or `zlib.output_compression` is on, PHP never sees the disconnect and the sync runs to completion
 - **Missing Data**: If data doesn't appear in cache, check PostgreSQL logs and FusionPBX error logs for database errors
 - **Refresh Button Not Appearing**: Ensure the sync completed successfully - check sync status in the database table `v_bulkvs_sync_status`
 - **Deleted Numbers Still Showing**: The cache should automatically remove deleted numbers, but if they persist, reload the page to trigger a sync

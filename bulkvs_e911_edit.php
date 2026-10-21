@@ -159,17 +159,6 @@
 				unset($sql, $parameters);
 			}
 			
-			// Invalidate cache - trigger a sync to update the cached record
-			require_once "resources/classes/bulkvs_cache.php";
-			$cache = new bulkvs_cache($database, $settings);
-			// Trigger a sync in the background (don't wait for it)
-			try {
-				$cache->syncE911();
-			} catch (Exception $e) {
-				// Ignore cache sync errors - API update was successful
-				error_log("BulkVS cache sync error after E911 update: " . $e->getMessage());
-			}
-			
 			message::add($text['message-update']);
 			header("Location: bulkvs_e911.php");
 			return;
